@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SQL 解读器</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #202522; background: #f3f4ef; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { padding: 44px max(24px, calc((100vw - 1180px)/2)); background: #173a32; color: white; }
+    header p { max-width: 670px; line-height: 1.6; color: #d3e2d9; margin-bottom: 0; }
+    h1 { margin: 0; font-size: clamp(30px, 4vw, 46px); letter-spacing: -.04em; }
+    h2 { margin: 0 0 16px; font-size: 20px; }
+    h3 { margin: 0 0 14px; font-size: 17px; }
+    main { max-width: 1228px; margin: 28px auto; padding: 0 24px 40px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 22px; align-items: start; }
+    .card { background: #fff; border: 1px solid #e1e5dc; border-radius: 20px; padding: 24px; box-shadow: 0 8px 26px #1a382709; }
+    .input-card { position: sticky; top: 16px; }
+    .intro { color: #626e64; line-height: 1.55; margin: -5px 0 18px; }
+    textarea { display: block; width: 100%; height: clamp(280px, calc(100vh - 285px), 760px); padding: 18px; border: 1px solid #cbd4ca; border-radius: 12px; resize: vertical; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: #16352d; background: #f9fbf7; }
+    textarea:focus, button:focus-visible { outline: 3px solid #8dd4a5; outline-offset: 2px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button { border: 1px solid #bfd0c2; background: white; border-radius: 10px; padding: 11px 16px; font-weight: 650; cursor: pointer; color: #173a32; }
+    button.primary { background: #1b6249; color: white; border-color: #1b6249; }
+    button:hover { filter: brightness(.95); }
+    .privacy { color: #778279; font-size: 12px; margin: 17px 0 0; }
+    .empty { min-height: 280px; display: grid; place-content: center; text-align: center; color: #7d8981; }
+    .error { padding: 14px; border-radius: 10px; background: #fff1ec; color: #a43922; }
+    .hero { border-radius: 16px; background: #eaf5eb; padding: 22px; margin-bottom: 20px; }
+    .eyebrow { margin: 0 0 8px; color: #48765b; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+    .hero h2 { margin: 0; color: #194c37; font-size: clamp(23px, 2.6vw, 32px); overflow-wrap: anywhere; }
+    .hero p:last-child { margin: 10px 0 0; color: #456352; font-size: 13px; line-height: 1.6; }
+    .outputs { margin: 0 0 20px; }
+    .outputs h3 { margin-bottom: 10px; }
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+    .field { padding: 9px 10px; border: 1px solid #e3eae3; border-radius: 8px; background: #f9fbf8; overflow-wrap: anywhere; text-align: left; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .field.calculated { background: #edf5ee; border-color: #d8e8db; }
+    .field small { display: block; margin-top: 3px; color: #669174; font: 11px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; }
+    .calculations { margin-top: 15px; }
+    .calc-card { border-left: 3px solid #8fbc9e; padding: 7px 11px; margin: 9px 0; background: #f6f9f5; border-radius: 5px; overflow-wrap: anywhere; }
+    .calc-card strong { color: #24543b; font-size: 13px; }
+    .calc-card p { margin: 6px 0 0; color: #536359; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .calc-card details { margin: 7px 0 0; padding: 0; border: 0; }
+    .calc-card pre { margin: 7px 0 0; font-size: 11px; }
+    .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 0 0 22px; }
+    .flow span { padding: 7px 9px; border-radius: 8px; background: #f0f3ef; color: #46604d; font-size: 12px; }
+    .flow button { padding: 7px 9px; border: 0; border-radius: 8px; background: #eaf5eb; color: #24583d; font-size: 12px; }
+    .flow b { color: #8da395; }
+    .cte-link { padding: 0; border: 0; color: #24583d; font: inherit; text-align: left; }
+    .lineage-dialog { width: min(680px, calc(100vw - 32px)); max-height: 80vh; overflow: auto; border: 0; border-radius: 18px; padding: 24px; box-shadow: 0 20px 70px #14271f55; }
+    .lineage-dialog::backdrop { background: #10251da8; }
+    .lineage-head { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+    .lineage-head h2 { overflow-wrap: anywhere; }
+    .lineage-path { padding: 11px 13px; margin: 8px 0; border-radius: 8px; background: #f2f7f2; color: #214731; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .lineage-prefix { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 8px 0 18px; }
+    .lineage-prefix span { padding: 5px 7px; border-radius: 6px; background: #edf3ed; color: #356046; font-size: 12px; }
+    .lineage-prefix b { color: #90aa97; font-size: 12px; }
+    .lineage-branch { padding: 13px; margin: 9px 0; border: 1px solid #e0e9df; border-radius: 10px; }
+    .lineage-branch h4 { margin: 0 0 8px; color: #24583d; font-size: 14px; }
+    .lineage-table { margin: 9px 0 0; }
+    .lineage-table strong { display: block; margin-bottom: 6px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .lineage-table span { display: inline-block; max-width: 100%; margin: 2px 5px 2px 0; padding: 5px 7px; border-radius: 6px; background: #f2f7f2; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .path-node + .path-node::before { content: '↓'; display: block; color: #759782; }
+    .path-node:last-child { font-weight: 700; }
+    .lineage-dialog pre { max-height: 220px; overflow: auto; padding: 12px; border-radius: 8px; background: #f7f8f5; font-size: 12px; }
+    .lineage-dialog pre.cte-source { max-height: 42vh; white-space: pre; overflow-wrap: normal; }
+    .step { border: 1px solid #e5eae3; border-radius: 14px; padding: 17px; margin: 12px 0; }
+    .set-branch { padding: 11px 13px; margin: 9px 0; border-radius: 9px; background: #f6f9f5; }
+    .set-branch strong { font-size: 13px; color: #24583d; }
+    .step-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 9px; margin-bottom: 8px; }
+    .step-num { color: #21845c; font-size: 12px; font-weight: 750; }
+    .step h3 { margin: 0; }
+    .table-name { margin: 0 0 13px; color: #66746a; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .group { padding: 11px 0; border-top: 1px solid #edf0eb; }
+    .group:first-of-type { border: 0; padding-top: 0; }
+    .group-label { margin: 0 0 8px; color: #78877b; font-size: 12px; font-weight: 700; }
+    .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+    .chip { border-radius: 7px; background: #f2f5f1; padding: 7px 9px; color: #2d4234; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; max-width: 100%; }
+    .chip.time { background: #edf2fa; color: #284d75; }
+    .chip.key { background: #eaf5eb; color: #24583d; }
+    .note { margin: 0 0 12px; color: #526758; font-size: 13px; line-height: 1.55; }
+    .warning { padding: 9px 11px; margin: 7px 0; border-left: 3px solid #d99b3e; background: #fff8ec; color: #775522; border-radius: 4px; font-size: 12px; line-height: 1.5; }
+    details { margin-top: 18px; border-top: 1px solid #e7ebe5; padding-top: 15px; color: #657469; font-size: 12px; }
+    summary { cursor: pointer; font-weight: 650; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+    .small { color: #718076; font-size: 12px; line-height: 1.6; }
+    @media (max-width: 850px) { main { grid-template-columns: 1fr; } .input-card { position: static; } textarea { height: 300px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SQL 解读器</h1>
+    <p>粘贴 SQL 脚本，快速看清数据从哪里来、经过哪些处理，以及哪些结论还需要查数据才能确认。</p>
+  </header>
+  <main>
+    <section class="card input-card" aria-label="SQL 输入">
+      <h2>你的 SQL</h2>
+      <p class="intro">支持 SELECT、WITH CTE、集合运算、INSERT … SELECT，以及前置 ALTER TABLE SET TBLPROPERTIES 和 %trino / %sql。只做静态解读。</p>
+      <textarea id="sql" spellcheck="false" aria-label="粘贴 SQL" placeholder="在这里粘贴 SQL…"></textarea>
+      <div class="actions">
+        <button id="analyze" class="primary">解读 SQL</button>
+        <button id="example">载入示例</button>
+        <button id="clear">清空</button>
+      </div>
+      <p class="privacy">本地解析 · SQL 不会上传 · 不连接数据库</p>
+    </section>
+    <section class="card" aria-label="解读结果">
+      <div id="result" class="empty">粘贴 SQL 后，点击「解读 SQL」。</div>
+    </section>
+  </main>
+  <dialog id="lineage" class="lineage-dialog" aria-label="来源详情"></dialog>
+  <script src="./parser.js"></script>
+  <script>
+
+    const sample = `SELECT
+  count(distinct user_code)
+FROM dwm.ue_sales_activity_wide_1h_f a
+INNER JOIN dim.ue_all_brand_fellow_info_zip_history_1h_f b
+  ON b.datetime = 'latest'
+  AND a.fl_ad_account = b.fellow_ad_account
+  AND b.effective_start_time <= a.activity_time
+  AND a.activity_time < b.effective_end_time
+  AND b.fellow_brand = 'onvo'
+  AND b.fellow_emp_position = 'UD'
+  AND b.fellow_emp_status = '1'
+WHERE a.datetime = 'latest'
+  AND a.activity_type IN ('onvo_call_interaction')
+  AND a.call_duration > 0
+  AND a.activity_level = 'F'
+  AND DATE(a.activity_time) BETWEEN DATE '2026-06-25' AND DATE '2026-09-22';`;
+    const input = document.getElementById('sql');
+    const output = document.getElementById('result');
+    const lineageDialog = document.getElementById('lineage');
+    const el = (tag, className, value) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (value !== undefined) node.textContent = value;
+      return node;
+    };
+    function openLineage(title) {
+      lineageDialog.replaceChildren();
+      const head = el('div', 'lineage-head');
+      const close = el('button', '', '关闭');
+      close.addEventListener('click', () => lineageDialog.close());
+      head.append(el('h2', '', title), close);
+      lineageDialog.append(head);
+      if (!lineageDialog.open) lineageDialog.showModal();
+    }
+    function showColumn(data, stage, column) {
+      const traced = traceColumn(data, stage, column);
+      openLineage(`字段来源 · ${column.name}`);
+      lineageDialog.append(el('p', 'group-label', 'SQL 表达式'), el('pre', '', traced.expression));
+      const paths = traced.paths;
+      let prefixLength = 0;
+      while (paths.length > 1 && paths.every(path => path.length > prefixLength && path[prefixLength] === paths[0][prefixLength])) prefixLength++;
+      if (prefixLength) {
+        lineageDialog.append(el('p', 'group-label', '公共路径'));
+        const prefix = el('div', 'lineage-prefix');
+        paths[0].slice(0, prefixLength).forEach((node, i) => {
+          if (i) prefix.append(el('b', '', '→'));
+          prefix.append(el('span', '', /^(CTE |最终输出\.)/.test(node) ? node.slice(0, node.lastIndexOf('.')) : node));
+        });
+        lineageDialog.append(prefix);
+      }
+      const sourceList = selectedPaths => {
+        const groups = new Map();
+        [...new Set(selectedPaths.map(path => path.at(-1)))].forEach(source => {
+          const dot = source.lastIndexOf('.');
+          const table = dot > 0 && !/^(CTE |最终输出\.|分支 |LATERAL VIEW |常量：)/.test(source) ? source.slice(0, dot) : '';
+          const field = table ? source.slice(dot + 1) : source;
+          if (!groups.has(table)) groups.set(table, []);
+          groups.get(table).push(field);
+        });
+        const box = el('div');
+        groups.forEach((fields, table) => {
+          const group = el('div', 'lineage-table');
+          if (table) group.append(el('strong', '', table));
+          fields.forEach(field => group.append(el('span', '', field)));
+          box.append(group);
+        });
+        return box;
+      };
+      const branches = new Map();
+      paths.forEach(path => {
+        const label = path[prefixLength];
+        if (!branches.has(label)) branches.set(label, []);
+        branches.get(label).push(path);
+      });
+      const byBranch = branches.size > 1 && [...branches.keys()].every(label => /^分支 \d/.test(label || ''));
+      lineageDialog.append(el('h3', '', byBranch ? `按分支查看源字段（${branches.size}）` : '源字段'));
+      if (byBranch) branches.forEach((branchPaths, label) => {
+        const card = el('section', 'lineage-branch');
+        card.append(el('h4', '', label.replace(/\.[^.]+$/, '')), sourceList(branchPaths));
+        lineageDialog.append(card);
+      });
+      else lineageDialog.append(sourceList(paths));
+      const full = el('details');
+      full.append(el('summary', '', `展开完整路径（${paths.length} 条）`));
+      paths.forEach(path => {
+        const row = el('div', 'lineage-path');
+        path.forEach(node => row.append(el('div', 'path-node', node)));
+        full.append(row);
+      });
+      lineageDialog.append(full);
+      lineageDialog.append(el('p', 'small', '根据 SQL 文本推断字段值来源；筛选和关联如何影响记录，可查看下方处理步骤。未加别名且来源不唯一的字段，需要结合表结构核对。'));
+    }
+    function showStage(data, stage) {
+      openLineage(`CTE 详情 · ${stage.name}${stage.scope ? `（${stage.scope} 内）` : ''}`);
+      lineageDialog.append(el('p', 'group-label', 'CTE 源代码'), el('pre', 'cte-source', stage.sourceSql));
+      const direct = stage.branches
+        ? stage.branches.map((branch, i) => `分支 ${i + 1}：${branch.sources.join(' · ') || '无源表'}`)
+        : stage.sourceDetails.map(source => source.name);
+      lineageDialog.append(el('p', 'group-label', '直接读取'));
+      direct.forEach(item => lineageDialog.append(el('div', 'lineage-path', item)));
+      if (!direct.length) lineageDialog.append(el('div', 'lineage-path', '无源表'));
+      if (stage.lateral) lineageDialog.append(el('p', 'note', `LATERAL VIEW 将 ${stage.lateral.mapField || '输入'} 展开为 ${stage.lateral.columns.join('、')}。`));
+      const roots = new Set();
+      const collect = (current, owner, visited = new Set()) => {
+        if (current.branches) return current.branches.forEach(branch => collect(branch, owner, visited));
+        current.sourceDetails.forEach(source => {
+          if (source.query?.main) return collect(source.query.main, owner, visited);
+          const upstream = resolveCte(data, owner, source.name);
+          if (upstream && !visited.has(upstream)) collect(upstream, upstream, new Set([...visited, upstream]));
+          else if (!upstream) roots.add(source.name);
+        });
+      };
+      collect(stage, stage);
+      lineageDialog.append(el('p', 'group-label', '上游源表'));
+      lineageDialog.append(el('div', 'lineage-path', [...roots].join(' · ') || '仅使用常量或无法识别上游源表'));
+      lineageDialog.append(el('h3', '', `输出字段（${stage.outputColumns.length}）`));
+      const fields = el('div', 'field-grid');
+      stage.outputColumns.forEach(column => {
+        const button = el('button', 'field', column.name);
+        button.addEventListener('click', () => showColumn(data, stage, column));
+        fields.append(button);
+      });
+      lineageDialog.append(fields, el('p', 'small', '点击字段可继续查看它的来源路径。'));
+    }
+    function shortCondition(raw) {
+      const names = {
+        activity_time: '活动时间', activity_type: '活动类型', call_duration: '通话时长',
+        activity_level: '活动等级', fellow_brand: '品牌', fellow_emp_position: '员工岗位',
+        fellow_emp_status: '员工状态', datetime: '分区'
+      };
+      const date = raw.match(/DATE\s*\(\s*([\w.]+)\s*\)\s+BETWEEN\s+DATE\s+'([^']+)'\s+AND\s+DATE\s+'([^']+)'/i);
+      if (date) return `${names[date[1].split('.').at(-1)] || date[1]}：${date[2]} 至 ${date[3]}（含首尾）`;
+      const partitionDays = raw.match(/^datetime\s+BETWEEN[\s\S]*?date_sub\s*\(\s*to_date\s*\([^)]*\)\s*,\s*(\d+)\s*\)[\s\S]*?\bAND\s+date_format\s*\(\s*to_date\s*\(\s*'\$\{datetime\}'/i);
+      if (partitionDays) return `datetime：基准日及前 ${partitionDays[1]} 天（共 ${Number(partitionDays[1]) + 1} 天）`;
+      const excluded = raw.match(/^(?:\w+\.)?(\w+)\s+NOT\s+LIKE\s+'%([^%]+)%'$/i);
+      if (excluded) return `${excluded[1]} 不包含「${excluded[2]}」`;
+      const nullCheck = raw.match(/^(?:\w+\.)?(\w+)\s+IS\s+(NOT\s+)?NULL$/i);
+      if (nullCheck) return `${nullCheck[1]} ${nullCheck[2] ? '非空' : '为空'}`;
+      const oneValue = raw.match(/^(?:\w+\.)?(\w+)\s+IN\s*\(\s*'([^']+)'\s*\)$/i);
+      if (oneValue) return `${names[oneValue[1]] || oneValue[1]} = ${oneValue[2]}`;
+      const comparison = raw.match(/^(?:\w+\.)?(\w+)\s*(=|>=|<=|>|<)\s*(?:'([^']*)'|([\d.]+))$/i);
+      if (comparison) return `${names[comparison[1]] || comparison[1]} ${comparison[2]} ${comparison[3] ?? comparison[4]}`;
+      return raw.replace(/\s+/g, ' ').replace(/'([^']*)'/g, '$1').trim();
+    }
+    function category(raw, join) {
+      if (/\bdatetime\s*=\s*'latest'/i.test(raw)) return '快照分区';
+      if (/\bdatetime\s+BETWEEN\b/i.test(raw)) return '分区范围';
+      if (!join) return /\bBETWEEN\b|\b\w+_time\b/i.test(raw) ? '业务时间' : '业务条件';
+      if (/effective_(start|end)_time/i.test(raw)) return '有效时间';
+      if (/\b\w+\.\w+\s*=\s*\w+\.\w+\b/.test(raw)) return '关联键';
+      return '关联表限定';
+    }
+    function renderConditions(parts, join = false) {
+      const box = el('div');
+      const order = join ? ['关联键', '有效时间', '关联表限定', '快照分区'] : ['分区范围', '业务时间', '业务条件', '快照分区'];
+      order.forEach(label => {
+        const items = parts.filter(part => category(part, join) === label);
+        if (!items.length) return;
+        const group = el('div', 'group');
+        group.append(el('p', 'group-label', label));
+        const chips = el('div', 'chips');
+        items.forEach(item => chips.append(el('span', `chip ${label.includes('时间') ? 'time' : label === '关联键' ? 'key' : ''}`, shortCondition(item))));
+        group.append(chips);
+        box.append(group);
+      });
+      return box;
+    }
+    function renderSource(data, stage, number, title) {
+      const box = el('div', 'step');
+      const head = el('div', 'step-head');
+      const heading = el('h3');
+      if (stage.name) {
+        const button = el('button', 'cte-link', `${title}${stage.scope ? `（${stage.scope} 内）` : ''} · 查看来源`);
+        button.addEventListener('click', () => showStage(data, stage));
+        heading.append(button);
+      } else heading.textContent = title;
+      head.append(el('span', 'step-num', String(number).padStart(2, '0')), heading);
+      box.append(head);
+      if (stage.branches) {
+        const setNote = stage.setOps.every(op => op === 'UNION ALL')
+          ? 'UNION ALL 保留重复行。'
+          : `操作：${stage.setOps.join('、')}。${stage.setOps.some(op => /^(INTERSECT|EXCEPT)/.test(op)) ? ' INTERSECT / EXCEPT 的右侧分支影响保留哪些记录。' : ''}`;
+        box.append(el('p', 'note', `${stage.branches.length} 个 SELECT 分支，按字段位置参与集合运算。${setNote}`));
+        stage.branches.forEach((branch, i) => {
+          const item = el('div', 'set-branch');
+          item.append(el('strong', '', `分支 ${i + 1}${i ? ` · ${stage.setOps[i - 1]}` : ''}`));
+          item.append(el('p', 'table-name', branch.sources.join(' · ') || '无源表'));
+          if (branch.whereParts.length) item.append(renderConditions(branch.whereParts));
+          box.append(item);
+        });
+        return box;
+      }
+      const source = stage.sourceDetails[0];
+      box.append(el('p', 'table-name', source ? `${source.query?.main ? `子查询：${source.query.main.sources.join(' · ')}` : source.name}${source.alias ? ` · 别名 ${source.alias}` : ''}` : '无源表'));
+      if (stage.lateral) box.append(el('p', 'note', `LATERAL VIEW 展开 ${stage.lateral.mapField || '输入'} → ${stage.lateral.columns.join('、')}`));
+      if (stage.whereParts.length) box.append(renderConditions(stage.whereParts));
+      else box.append(el('p', 'note', /\bCASE\b/i.test(stage.fields) ? '本步无 WHERE；字段中的 CASE 条件会决定哪些值进入计算。' : '这一步没有 WHERE 筛选。'));
+      if (title.startsWith('生成 CTE')) box.append(el('p', 'small', `本步产出 ${stage.outputColumns.length} 个字段。`));
+      return box;
+    }
+    function renderJoin(join, number) {
+      const box = el('div', 'step');
+      const head = el('div', 'step-head');
+      head.append(el('span', 'step-num', String(number).padStart(2, '0')), el('h3', '', `匹配关联表 · ${join.type} JOIN`));
+      box.append(head, el('p', 'table-name', `${join.source}${join.alias ? ` · 别名 ${join.alias}` : ''}`));
+      if (join.type === 'INNER') box.append(el('p', 'note', '只有能匹配关联表的主表记录会进入统计。'));
+      if (join.type === 'LEFT') box.append(el('p', 'note', '主表记录都会保留，未匹配的关联表字段为空。'));
+      box.append(renderConditions(join.predicates, true));
+      return box;
+    }
+    function renderOutputs(data, stage, title = '输出字段') {
+      if (stage.metric.kind !== 'fields') return null;
+      const box = el('section', 'outputs');
+      box.append(el('h3', '', `${title}（${stage.outputColumns.length}）`));
+      const fields = el('div', 'field-grid');
+      stage.outputColumns.forEach(column => {
+        const field = el('button', `field${column.calculated ? ' calculated' : ''}`, column.name);
+        field.addEventListener('click', () => showColumn(data, stage, column));
+        if (column.note || column.calculated) field.append(el('small', '', column.note || '计算字段'));
+        fields.append(field);
+      });
+      box.append(fields);
+      const calculated = stage.outputColumns.filter(column => column.calculated);
+      if (calculated.length) {
+        const list = el('div', 'calculations');
+        list.append(el('p', 'group-label', '计算字段怎么得来'));
+        const emptyArrays = calculated.filter(column => /^coalesce\s*\(\s*[\w.]+\s*,\s*CAST\s*\(\s*array\s*\(\s*\)\s+AS\s+ARRAY<STRING>\s*\)\s*\)$/i.test(column.expression.replace(/\s+/g, ' ')));
+        if (emptyArrays.length > 1) {
+          const card = el('div', 'calc-card');
+          card.append(el('strong', '', `${emptyArrays.length} 个数组字段`));
+          card.append(el('p', '', '有值时保留原数组；NULL 时填空数组。'));
+          card.append(el('p', '', emptyArrays.map(column => column.name).join(' · ')));
+          list.append(card);
+        }
+        calculated.forEach(column => {
+          if (emptyArrays.length > 1 && emptyArrays.includes(column)) return;
+          const card = el('div', 'calc-card');
+          card.append(el('strong', '', column.name));
+          const collected = column.expression.match(/^collect_set\s*\(\s*CASE\s+WHEN\s+([\s\S]*?)\s+THEN\s+([\s\S]*?)\s+END\s*\)$/i);
+          const rule = column.expression.match(/^CASE\s+WHEN\s+([\s\S]*?)\s+THEN\s+([\s\S]*?)\s+ELSE\s+([\s\S]*?)\s+END$/i);
+          if (collected) {
+            const event = collected[1].match(/\buser_action_name_en\s*=\s*'([^']+)'/i);
+            const days = collected[1].match(/date_sub\s*\(\s*to_date\s*\([^)]*\)\s*,\s*(\d+)\s*\)/i);
+            card.append(el('p', '', `收集 ${collected[2].trim()}，形成去重集合。`));
+            if (event) card.append(el('p', '', `事件：${event[1]}`));
+            card.append(el('p', '', days ? `额外时间：基准日及前 ${days[1]} 天（共 ${Number(days[1]) + 1} 天）` : '时间：沿用上游筛选范围'));
+            const detail = el('details');
+            detail.append(el('summary', '', '查看原始计算条件'), el('pre', '', collected[1].trim()));
+            card.append(detail);
+          } else if (rule) {
+            card.append(el('p', '', `当 ${shortCondition(rule[1])} → ${rule[2].trim()}`));
+            card.append(el('p', '', `其他情况 → ${rule[3].trim()}`));
+          } else if (column.expression.length <= 110) card.append(el('p', '', column.expression));
+          else {
+            card.append(el('p', '', `${column.expression.slice(0, 80).trim()}…`));
+            const detail = el('details');
+            detail.append(el('summary', '', '查看完整表达式'), el('pre', '', column.expression));
+            card.append(detail);
+          }
+          list.append(card);
+        });
+        box.append(list);
+      }
+      return box;
+    }
+    function renderProcessing(stage, number) {
+      if (!stage.group && !stage.having && !stage.qualify && !stage.order && !stage.limit) return null;
+      const box = el('div', 'step');
+      const head = el('div', 'step-head');
+      head.append(el('span', 'step-num', String(number).padStart(2, '0')), el('h3', '', '结果处理'));
+      box.append(head);
+      const groupField = /^\d+$/.test(stage.group) ? stage.outputColumns[Number(stage.group) - 1]?.name : '';
+      const group = groupField ? `${groupField}（GROUP BY ${stage.group}）` : stage.group;
+      const unique = stage.having.match(/^count\s*\(\s*distinct\s+([\w.]+)\s*\)\s*=\s*1$/i);
+      const having = unique ? `每组恰好 1 个不同的 ${unique[1]}` : stage.having;
+      const parts = [stage.group && `分组：${group}`, stage.having && `组后筛选：${having}`, stage.qualify && `窗口筛选：${stage.qualify}`, stage.order && `排序：${stage.order}`, stage.limit && `最多 ${stage.limit} 行`].filter(Boolean);
+      const chips = el('div', 'chips');
+      parts.forEach(part => chips.append(el('span', 'chip', part)));
+      box.append(chips);
+      return box;
+    }
+    function render(data) {
+      output.className = '';
+      output.replaceChildren();
+      const stages = [...data.ctes, ...(data.main ? [data.main] : [])];
+      const main = data.main;
+      const focus = main || data.ctes.at(-1);
+      const hero = el('div', 'hero');
+      hero.append(el('p', 'eyebrow', data.write ? `写入语句 · INSERT ${data.write.mode}` : main ? `最终结果 · ${main.metric.grain}` : `SQL 片段 · ${data.ctes.length} 个 CTE`),
+        el('h2', '', data.write ? data.write.mode === 'OVERWRITE' ? '覆盖写入目标表' : '追加写入目标表' : main ? main.metric.label : '已解析 CTE 定义'));
+      const summary = data.write
+        ? `目标：${data.write.target}${data.write.partition ? `；分区：${data.write.partition}` : ''}。最终 SELECT 提供 ${main.outputColumns.length} 个字段。`
+        : !main
+        ? `最后一个 CTE「${focus.name}」产出 ${focus.outputColumns.length} 个字段；后面还需要 SELECT 或 INSERT … SELECT 才是完整语句。`
+        : main.metric.kind === 'distinct'
+          ? `符合筛选和关联条件的 ${main.metric.field} 去重数量。`
+          : `从 ${main.sources[0] || '当前查询'} 读取，${main.group ? '按分组' : '逐行'}展示结果${main.limit ? `，最多 ${main.limit} 行` : ''}。`;
+      hero.append(el('p', '', summary));
+      if (main && main.metric.kind !== 'fields') {
+        const metric = el('button', '', '查看指标来源');
+        metric.addEventListener('click', () => showColumn(data, main, { ...main.outputColumns[0], name: main.metric.label }));
+        hero.append(metric);
+      }
+      output.append(hero);
+      if (data.magic || data.setup.length) {
+        const setup = el('div', 'step');
+        setup.append(el('h3', '', '脚本前置部分'));
+        if (data.magic) setup.append(el('p', 'note', `入口标记：%${data.magic}`));
+        data.setup.forEach(item => {
+          setup.append(el('p', 'table-name', `ALTER TABLE ${item.target} · SET TBLPROPERTIES`));
+          setup.append(el('pre', '', item.properties));
+        });
+        setup.append(el('p', 'small', '这里仅展示表属性设置；不会执行 ALTER 或写入数据。'));
+        output.append(setup);
+      }
+      const outputs = renderOutputs(data, focus, data.write ? '写入 SELECT 的字段' : main ? '输出字段' : `${focus.name} 的字段`);
+      if (outputs) output.append(outputs);
+      const flow = el('div', 'flow');
+      const labels = main
+        ? [...data.ctes, main.whereParts.length ? '筛选主表' : `读取 ${main.sources[0] || '数据'}`, ...main.joins.map(j => `${j.type} JOIN`), data.write ? data.write.mode === 'OVERWRITE' ? '覆盖写入' : '追加写入' : main.metric.kind === 'distinct' ? '去重计数' : main.group ? '分组输出' : '输出结果']
+        : [...data.ctes, '待补最终 SELECT'];
+      labels.forEach((item, i) => {
+        if (i) flow.append(el('b', '', '→'));
+        if (typeof item !== 'string') {
+          const button = el('button', '', `CTE ${item.name}${item.scope ? `（${item.scope} 内）` : ''}`);
+          button.addEventListener('click', () => showStage(data, item));
+          flow.append(button);
+        } else flow.append(el('span', '', item));
+      });
+      output.append(flow);
+      let number = 0;
+      data.ctes.forEach(stage => {
+        output.append(renderSource(data, stage, ++number, `生成 CTE ${stage.name}`));
+        stage.joins.forEach(join => output.append(renderJoin(join, ++number)));
+        const processing = renderProcessing(stage, number + 1);
+        if (processing) { number++; output.append(processing); }
+      });
+      if (main) {
+        output.append(renderSource(data, main, ++number, main.whereParts.length ? '筛选主表' : '读取主表'));
+        main.joins.forEach(join => output.append(renderJoin(join, ++number)));
+        const processing = renderProcessing(main, number + 1);
+        if (processing) output.append(processing);
+        if (data.write) {
+          const box = el('div', 'step');
+          const head = el('div', 'step-head');
+          head.append(el('span', 'step-num', String(++number).padStart(2, '0')), el('h3', '', '写入目标'));
+          box.append(head, el('p', 'table-name', data.write.target));
+          if (data.write.partition) box.append(el('span', 'chip', `分区：${data.write.partition}`));
+          output.append(box);
+        }
+      }
+      const warnings = [...new Set(stages.flatMap(s => s.warnings))];
+      if (warnings.length) {
+        output.append(el('h3', '', '需要核对'));
+        warnings.forEach(message => output.append(el('p', 'warning', message)));
+      }
+      const original = el('details');
+      original.append(el('summary', '', '查看原始 SQL'), el('pre', '', input.value));
+      output.append(original, el('p', 'small', '静态解读；结果数量、字段类型和关联唯一性需要查表验证。'));
+    }
+    document.getElementById('analyze').addEventListener('click', () => {
+      try { render(analyze(input.value)); }
+      catch (error) { output.className = ''; output.replaceChildren(el('p', 'error', error.message)); }
+    });
+    document.getElementById('example').addEventListener('click', () => {
+      input.value = sample;
+      document.getElementById('analyze').click();
+    });
+    document.getElementById('clear').addEventListener('click', () => {
+      input.value = '';
+      output.className = 'empty';
+      output.textContent = '粘贴 SQL 后，点击「解读 SQL」。';
+      input.focus();
+    });
+  </script>
+</body>
+</html>
