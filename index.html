@@ -17,8 +17,19 @@
     .card { background: #fff; border: 1px solid #e1e5dc; border-radius: 20px; padding: 24px; box-shadow: 0 8px 26px #1a382709; }
     .input-card { position: sticky; top: 16px; }
     .intro { color: #626e64; line-height: 1.55; margin: -5px 0 18px; }
-    textarea { display: block; width: 100%; height: clamp(280px, calc(100vh - 285px), 760px); padding: 18px; border: 1px solid #cbd4ca; border-radius: 12px; resize: vertical; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: #16352d; background: #f9fbf7; }
-    textarea:focus, button:focus-visible { outline: 3px solid #8dd4a5; outline-offset: 2px; }
+    .editor { position: relative; height: clamp(280px, calc(100vh - 285px), 760px); border: 1px solid #cbd4ca; border-radius: 12px; background: #f9fbf7; resize: vertical; overflow: hidden; }
+    .editor:focus-within, button:focus-visible, .find-bar input:focus { outline: 3px solid #8dd4a5; outline-offset: 2px; }
+    .editor textarea, .editor pre { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 18px; border: 0; border-radius: 12px; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: normal; tab-size: 4; white-space: pre; }
+    .editor textarea { color: #16352d; background: transparent; resize: none; overflow: auto; }
+    .editor textarea:focus { outline: none; }
+    .editor pre { pointer-events: none; overflow: hidden; color: transparent; }
+    .editor mark { color: transparent; background: #ffe09a; border-radius: 2px; }
+    .editor mark.current { background: #f5bb52; }
+    .find-bar { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; }
+    .find-bar[hidden] { display: none; }
+    .find-bar input { min-width: 0; flex: 1; padding: 9px 11px; border: 1px solid #bfd0c2; border-radius: 8px; font: inherit; }
+    .find-bar span { min-width: 52px; text-align: center; color: #657469; font-size: 12px; }
+    .find-bar button { padding: 8px 10px; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
     button { border: 1px solid #bfd0c2; background: white; border-radius: 10px; padding: 11px 16px; font-weight: 650; cursor: pointer; color: #173a32; }
     button.primary { background: #1b6249; color: white; border-color: #1b6249; }
@@ -84,7 +95,7 @@
     summary { cursor: pointer; font-weight: 650; }
     pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
     .small { color: #718076; font-size: 12px; line-height: 1.6; }
-    @media (max-width: 850px) { main { grid-template-columns: 1fr; } .input-card { position: static; } textarea { height: 300px; } }
+    @media (max-width: 850px) { main { grid-template-columns: 1fr; } .input-card { position: static; } .editor { height: 300px; } }
   </style>
 </head>
 <body>
@@ -96,8 +107,18 @@
     <section class="card input-card" aria-label="SQL 输入">
       <h2>你的 SQL</h2>
       <p class="intro">支持 SELECT、WITH CTE、集合运算、INSERT … SELECT，以及前置 ALTER TABLE SET TBLPROPERTIES 和 %trino / %sql。只做静态解读。</p>
-      <textarea id="sql" wrap="off" spellcheck="false" aria-label="粘贴 SQL" placeholder="在这里粘贴 SQL…"></textarea>
-      <p class="small">点击 SQL 中的 CTE 名称或字段，右侧会显示对应来源。</p>
+      <div id="find-bar" class="find-bar" role="search" aria-label="在 SQL 中查找" hidden>
+        <input id="find-input" type="search" aria-label="查找 SQL 文本" placeholder="查找 SQL 文本">
+        <span id="find-count" aria-live="polite">0 / 0</span>
+        <button id="find-prev" type="button" aria-label="上一个匹配">↑</button>
+        <button id="find-next" type="button" aria-label="下一个匹配">↓</button>
+        <button id="find-close" type="button" aria-label="关闭查找">关闭</button>
+      </div>
+      <div class="editor">
+        <pre id="sql-highlights" aria-hidden="true"></pre>
+        <textarea id="sql" wrap="off" spellcheck="false" aria-label="粘贴 SQL" placeholder="在这里粘贴 SQL…"></textarea>
+      </div>
+      <p class="small">⌘↵ 解读 · ⌘F 查找 · 点击 CTE 或字段查看来源并高亮同词。</p>
       <div class="actions">
         <button id="analyze" class="primary">解读 SQL</button>
         <button id="example">载入示例</button>
@@ -130,6 +151,13 @@ WHERE a.datetime = 'latest'
   AND DATE(a.activity_time) BETWEEN DATE '2026-06-25' AND DATE '2026-09-22';`;
     const input = document.getElementById('sql');
     const output = document.getElementById('result');
+    const highlights = document.getElementById('sql-highlights');
+    const findBar = document.getElementById('find-bar');
+    const findInput = document.getElementById('find-input');
+    const findCount = document.getElementById('find-count');
+    let selectedWord = '', findMatches = [], findIndex = -1;
+    const wordRanges = sql => [...sql.matchAll(/[\p{L}_][\p{L}\p{N}_$]*/gu)]
+      .map(match => ({ value: match[0], start: match.index, end: match.index + match[0].length }));
     let activeData, activeSql = '';
     const el = (tag, className, value) => {
       const node = document.createElement(tag);
@@ -450,7 +478,113 @@ WHERE a.datetime = 'latest'
       output.replaceChildren(panel);
       panel.scrollIntoView({ block: 'start' });
     }
+    function syncHighlights() {
+      highlights.scrollTop = input.scrollTop;
+      highlights.scrollLeft = input.scrollLeft;
+    }
+    function showHighlights() {
+      const sql = input.value;
+      const ranges = !findBar.hidden && findInput.value ? findMatches : selectedWord
+        ? wordRanges(sql).filter(word => word.value.toLowerCase() === selectedWord.toLowerCase()) : [];
+      const content = document.createDocumentFragment();
+      let offset = 0;
+      ranges.forEach((range, index) => {
+        content.append(document.createTextNode(sql.slice(offset, range.start)));
+        const mark = el('mark', index === findIndex && !findBar.hidden ? 'current' : '', sql.slice(range.start, range.end));
+        content.append(mark);
+        offset = range.end;
+      });
+      content.append(document.createTextNode(sql.slice(offset)));
+      highlights.replaceChildren(content);
+      syncHighlights();
+    }
+    function revealFind() {
+      if (findIndex < 0) return;
+      const match = highlights.querySelectorAll('mark')[findIndex].getBoundingClientRect();
+      const editor = input.getBoundingClientRect();
+      if (match.top < editor.top + 18 || match.bottom > editor.bottom - 18)
+        input.scrollTop += match.top - editor.top - editor.height / 2;
+      if (match.left < editor.left + 18 || match.right > editor.right - 18)
+        input.scrollLeft += match.left - editor.left - editor.width / 2;
+      syncHighlights();
+    }
+    function updateFind() {
+      const query = findInput.value.toLowerCase();
+      const sql = input.value.toLowerCase();
+      findMatches = [];
+      if (query) {
+        let start = 0;
+        while ((start = sql.indexOf(query, start)) !== -1) {
+          findMatches.push({ start, end: start + query.length });
+          start += query.length;
+        }
+      }
+      findIndex = findMatches.length ? 0 : -1;
+      findCount.textContent = `${findIndex + 1} / ${findMatches.length}`;
+      showHighlights();
+      revealFind();
+    }
+    function moveFind(direction) {
+      if (!findMatches.length) return;
+      findIndex = (findIndex + direction + findMatches.length) % findMatches.length;
+      const match = findMatches[findIndex];
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(match.start, match.end);
+      findInput.focus({ preventScroll: true });
+      findCount.textContent = `${findIndex + 1} / ${findMatches.length}`;
+      showHighlights();
+      revealFind();
+    }
+    function closeFind(focusInput = true) {
+      findBar.hidden = true;
+      findInput.value = '';
+      findMatches = [];
+      findIndex = -1;
+      showHighlights();
+      if (focusInput) input.focus();
+    }
+    function openFind() {
+      if (document.activeElement === input && input.selectionStart !== input.selectionEnd) {
+        const selected = input.value.slice(input.selectionStart, input.selectionEnd);
+        if (!selected.includes('\n')) findInput.value = selected;
+      }
+      findBar.hidden = false;
+      updateFind();
+      findInput.focus();
+      findInput.select();
+    }
+    input.addEventListener('scroll', syncHighlights);
+    input.addEventListener('input', () => {
+      if (!findBar.hidden) updateFind();
+      else showHighlights();
+    });
+    input.addEventListener('keydown', event => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        document.getElementById('analyze').click();
+      }
+    });
+    document.addEventListener('keydown', event => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        openFind();
+      }
+    });
+    findInput.addEventListener('input', updateFind);
+    findInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { event.preventDefault(); moveFind(event.shiftKey ? -1 : 1); }
+      if (event.key === 'Escape') closeFind();
+    });
+    document.getElementById('find-prev').addEventListener('click', () => moveFind(-1));
+    document.getElementById('find-next').addEventListener('click', () => moveFind(1));
+    document.getElementById('find-close').addEventListener('click', () => closeFind());
     input.addEventListener('click', () => {
+      if (!findBar.hidden) closeFind(false);
+      const words = wordRanges(input.value);
+      const word = words.find(word => word.start <= input.selectionStart && input.selectionStart < word.end)
+        || words.find(word => word.end === input.selectionStart);
+      selectedWord = word?.value || '';
+      showHighlights();
       if (!input.value.trim()) return;
       try {
         if (activeSql !== input.value) render(analyze(input.value));
@@ -464,10 +598,14 @@ WHERE a.datetime = 'latest'
     });
     document.getElementById('example').addEventListener('click', () => {
       input.value = sample;
+      selectedWord = '';
+      closeFind(false);
       document.getElementById('analyze').click();
     });
     document.getElementById('clear').addEventListener('click', () => {
       input.value = '';
+      selectedWord = '';
+      closeFind(false);
       activeSql = '';
       output.className = 'empty';
       output.textContent = '粘贴 SQL 后，点击「解读 SQL」。';
