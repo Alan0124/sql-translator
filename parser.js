@@ -444,6 +444,35 @@ function traceColumn(data, stage, column) {
   return { expression, paths: [...new Map(paths.map(path => [path.join(' → '), path])).values()] };
 }
 
+function locateSql(sql, data, offset) {
+  const ts = tokens(sql);
+  let index = ts.findIndex(t => t.start <= offset && offset < t.end);
+  if (index < 0) index = ts.findIndex(t => t.end === offset);
+  if (index < 0 || !WORD.test(ts[index].value)) return null;
+  const token = ts[index];
+  if (SQL_WORDS.has(token.upper) || ['SELECT', 'FROM', 'JOIN', 'WHERE', 'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'WITH', 'INSERT', 'OVERWRITE', 'INTO'].includes(token.upper) || ts[index + 1]?.value === '(') return null;
+  const used = new Map();
+  const spans = data.ctes.map(stage => {
+    const start = sql.indexOf(stage.sourceSql, used.get(stage.sourceSql) || 0);
+    used.set(stage.sourceSql, start + 1);
+    return { stage, start, size: stage.sourceSql.length };
+  }).filter(item => item.start >= 0);
+  const current = spans.filter(item => item.start <= token.start && token.start < item.start + item.size)
+    .sort((a, b) => a.size - b.size)[0]?.stage || data.main || data.ctes.at(-1);
+  const definition = spans.find(item => item.start === token.start && item.stage.name.toLowerCase() === token.value.toLowerCase());
+  const cte = definition?.stage || ['FROM', 'JOIN'].includes(ts[index - 1]?.upper) && current && resolveCte(data, current, token.value);
+  if (cte) return { type: 'cte', stage: cte };
+  let chain = index;
+  while (ts[chain - 1]?.value === '.' && WORD.test(ts[chain - 2]?.value || '')) chain -= 2;
+  if (['FROM', 'JOIN', 'TABLE'].includes(ts[chain - 1]?.upper) || ts[index + 1]?.value === '.') return null;
+  if (!current) return null;
+  const qualifier = ts[index - 1]?.value === '.' && WORD.test(ts[index - 2]?.value || '') ? ts[index - 2].value : '';
+  const column = !qualifier && current.outputColumns.find(item => item.name.toLowerCase() === token.value.toLowerCase())
+    || { name: token.value, expression: qualifier ? `${qualifier}.${token.value}` : token.value };
+  return { type: 'field', stage: current, column };
+}
+
 globalThis.analyze = analyze;
 globalThis.traceColumn = traceColumn;
 globalThis.resolveCte = resolveCte;
+globalThis.locateSql = locateSql;

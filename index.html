@@ -30,6 +30,8 @@
     .eyebrow { margin: 0 0 8px; color: #48765b; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
     .hero h2 { margin: 0; color: #194c37; font-size: clamp(23px, 2.6vw, 32px); overflow-wrap: anywhere; }
     .hero p:last-child { margin: 10px 0 0; color: #456352; font-size: 13px; line-height: 1.6; }
+    .selection { margin-bottom: 20px; padding: 18px; border: 1px solid #b9d9c4; border-radius: 14px; background: #f5faf5; }
+    .selection pre { max-height: 42vh; overflow: auto; padding: 12px; border-radius: 8px; background: white; font-size: 12px; white-space: pre; }
     .outputs { margin: 0 0 20px; }
     .outputs h3 { margin-bottom: 10px; }
     .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
@@ -97,6 +99,7 @@
       <h2>你的 SQL</h2>
       <p class="intro">支持 SELECT、WITH CTE、集合运算、INSERT … SELECT，以及前置 ALTER TABLE SET TBLPROPERTIES 和 %trino / %sql。只做静态解读。</p>
       <textarea id="sql" spellcheck="false" aria-label="粘贴 SQL" placeholder="在这里粘贴 SQL…"></textarea>
+      <p class="small">点击 SQL 中的 CTE 名称或字段，右侧会显示对应来源。</p>
       <div class="actions">
         <button id="analyze" class="primary">解读 SQL</button>
         <button id="example">载入示例</button>
@@ -131,6 +134,7 @@ WHERE a.datetime = 'latest'
     const input = document.getElementById('sql');
     const output = document.getElementById('result');
     const lineageDialog = document.getElementById('lineage');
+    let activeData, activeSql = '';
     const el = (tag, className, value) => {
       const node = document.createElement(tag);
       if (className) node.className = className;
@@ -396,6 +400,8 @@ WHERE a.datetime = 'latest'
     function render(data) {
       output.className = '';
       output.replaceChildren();
+      activeData = data;
+      activeSql = input.value;
       const stages = [...data.ctes, ...(data.main ? [data.main] : [])];
       const main = data.main;
       const focus = main || data.ctes.at(-1);
@@ -472,9 +478,47 @@ WHERE a.datetime = 'latest'
       original.append(el('summary', '', '查看原始 SQL'), el('pre', '', input.value));
       output.append(original, el('p', 'small', '静态解读；结果数量、字段类型和关联唯一性需要查表验证。'));
     }
+    function renderSelection(data, hit) {
+      output.querySelector('.selection')?.remove();
+      const panel = el('section', 'selection');
+      const head = el('div', 'lineage-head');
+      head.append(el('h2', '', hit.type === 'cte' ? `CTE · ${hit.stage.name}` : `字段 · ${hit.column.name}`));
+      const close = el('button', '', '关闭');
+      close.addEventListener('click', () => panel.remove());
+      head.append(close);
+      panel.append(head);
+      if (hit.type === 'cte') {
+        panel.append(el('p', 'group-label', '直接读取'));
+        const sources = hit.stage.branches
+          ? hit.stage.branches.flatMap(branch => branch.sources) : hit.stage.sources;
+        panel.append(el('p', 'note', [...new Set(sources)].join(' · ') || '无源表'));
+        panel.append(el('p', 'group-label', 'CTE 源代码'), el('pre', '', hit.stage.sourceSql));
+      } else {
+        const traced = traceColumn(data, hit.stage, hit.column);
+        panel.append(el('p', 'group-label', 'SQL 表达式'), el('pre', '', traced.expression));
+        panel.append(el('p', 'group-label', '源字段'));
+        const sources = el('div', 'chips');
+        [...new Set(traced.paths.map(path => path.at(-1)))].forEach(source => sources.append(el('span', 'chip', source)));
+        panel.append(sources);
+        const full = el('details');
+        full.append(el('summary', '', `展开完整路径（${traced.paths.length} 条）`));
+        traced.paths.forEach(path => full.append(el('div', 'lineage-path', path.join(' → '))));
+        panel.append(full);
+      }
+      output.prepend(panel);
+      panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    input.addEventListener('click', () => {
+      if (!input.value.trim()) return;
+      try {
+        if (activeSql !== input.value) render(analyze(input.value));
+        const hit = locateSql(input.value, activeData, input.selectionStart);
+        if (hit) renderSelection(activeData, hit);
+      } catch (error) { output.className = ''; output.replaceChildren(el('p', 'error', error.message)); }
+    });
     document.getElementById('analyze').addEventListener('click', () => {
       try { render(analyze(input.value)); }
-      catch (error) { output.className = ''; output.replaceChildren(el('p', 'error', error.message)); }
+      catch (error) { activeSql = ''; output.className = ''; output.replaceChildren(el('p', 'error', error.message)); }
     });
     document.getElementById('example').addEventListener('click', () => {
       input.value = sample;
@@ -482,6 +526,7 @@ WHERE a.datetime = 'latest'
     });
     document.getElementById('clear').addEventListener('click', () => {
       input.value = '';
+      activeSql = '';
       output.className = 'empty';
       output.textContent = '粘贴 SQL 后，点击「解读 SQL」。';
       input.focus();

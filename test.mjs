@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import './parser.js';
-const { analyze, traceColumn } = globalThis;
+const { analyze, traceColumn, locateSql } = globalThis;
 
 const sql = `WITH recent AS (
   SELECT user_code, veh_model FROM dws.clicks
@@ -20,6 +20,13 @@ assert.equal(result.main.group, 'r.veh_model');
 assert.equal(result.main.limit, '10');
 assert.deepEqual(traceColumn(result, result.main, result.main.outputColumns[0]).paths,
   [['最终输出.veh_model', 'CTE recent.veh_model', 'dws.clicks.veh_model']]);
+assert.equal(locateSql(sql, result, sql.indexOf('recent AS') + 2).stage.name, 'recent');
+assert.equal(locateSql(sql, result, sql.indexOf('FROM recent') + 7).stage.name, 'recent');
+const clickedField = locateSql(sql, result, sql.indexOf('r.veh_model') + 4);
+assert.equal(clickedField.type, 'field');
+assert.equal(locateSql(sql, result, sql.indexOf('r.veh_model') + 2).column.name, 'veh_model');
+assert.deepEqual(traceColumn(result, clickedField.stage, clickedField.column).paths.at(0).at(-1), 'dws.clicks.veh_model');
+assert.equal(locateSql(sql, result, sql.indexOf('dws.clicks') + 5), null);
 assert.throws(() => analyze('DELETE FROM dws.clicks'), /只支持 SELECT/);
 const sets = analyze('SELECT id FROM a UNION ALL SELECT id FROM b INTERSECT SELECT id FROM c EXCEPT SELECT id FROM d');
 assert.deepEqual(sets.main.setOps, ['UNION ALL', 'INTERSECT', 'EXCEPT']);
@@ -198,7 +205,13 @@ assert.deepEqual(complex.ctes.find(stage => stage.name === 'second').outputColum
 assert.deepEqual(traceColumn(complex, complex.ctes.find(stage => stage.name === 'second'), complex.ctes.find(stage => stage.name === 'second').outputColumns[1]).paths[0].at(-1), 't3.val');
 assert.ok(traceColumn(complex, complex.ctes.find(stage => stage.name === 'exploded'), complex.ctes.find(stage => stage.name === 'exploded').outputColumns[1]).paths.some(path => path.at(-1) === 't1.val'));
 assert.ok(traceColumn(complex, complex.main, complex.main.outputColumns[0]).paths.some(path => path.at(-1) === 't4.id'));
-const fellowEatv = analyze(readFileSync(new URL('./fixtures/fellow-eatv.sql', import.meta.url), 'utf8'));
+const repeatedCtes = `WITH first AS (WITH tmp AS (SELECT id FROM t) SELECT id FROM tmp),
+second AS (WITH tmp AS (SELECT id FROM t) SELECT id FROM tmp)
+SELECT id FROM second`;
+const repeated = analyze(repeatedCtes);
+assert.equal(locateSql(repeatedCtes, repeated, repeatedCtes.lastIndexOf('tmp AS (') + 1).stage.scope, 'second');
+const fellowSql = readFileSync(new URL('./fixtures/fellow-eatv.sql', import.meta.url), 'utf8');
+const fellowEatv = analyze(fellowSql);
 assert.equal(fellowEatv.ctes.length, 19);
 assert.equal(fellowEatv.write.target, 'ads.ue_fellow_eatv_analysis_for_mate_1d_f');
 assert.equal(fellowEatv.main.outputColumns.length, 11);
@@ -215,4 +228,8 @@ assert.equal(fellowSources.length, 8);
 assert.equal(new Set(fellowSources.map(path => path.find(node => node.startsWith('分支 ')))).size, 3);
 assert.ok(fellowSources.some(path =>
   path.at(-1) === 'dwm.ue_sales_build_connection_record_single_1h_f.fellow_ad_account'));
+assert.equal(locateSql(fellowSql, fellowEatv, fellowSql.indexOf('tmp_mappng AS') + 3).stage.name, 'tmp_mappng');
+const clickedFellow = locateSql(fellowSql, fellowEatv, fellowSql.lastIndexOf('SELECT fellow_ad_account') + 10);
+assert.equal(clickedFellow.type, 'field');
+assert.equal(traceColumn(fellowEatv, clickedFellow.stage, clickedFellow.column).paths.length, 8);
 console.log('SQL 解读器检查通过');
