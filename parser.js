@@ -467,8 +467,15 @@ function locateSql(sql, data, offset) {
   if (['FROM', 'JOIN', 'TABLE'].includes(ts[chain - 1]?.upper) || ts[index + 1]?.value === '.') return null;
   if (!current) return null;
   const qualifier = ts[index - 1]?.value === '.' && WORD.test(ts[index - 2]?.value || '') ? ts[index - 2].value : '';
-  const column = !qualifier && current.outputColumns.find(item => item.name.toLowerCase() === token.value.toLowerCase())
-    || { name: token.value, expression: qualifier ? `${qualifier}.${token.value}` : token.value };
+  let column = !qualifier && current.outputColumns.find(item => item.name.toLowerCase() === token.value.toLowerCase());
+  if (!column && current.branches) {
+    const positions = new Set();
+    current.branches.forEach(branch => branch.outputColumns.forEach((item, i) => {
+      if (fieldReferences(item.expression).some(ref => ref.split('.').at(-1) === token.value)) positions.add(i);
+    }));
+    if (positions.size === 1) column = current.outputColumns[[...positions][0]];
+  }
+  column ||= { name: token.value, expression: qualifier ? `${qualifier}.${token.value}` : token.value };
   return { type: 'field', stage: current, column };
 }
 

@@ -221,6 +221,8 @@ assert.equal(fellowEatv.ctes.find(stage => stage.name === 'union_info').branches
 const top20 = fellowEatv.ctes.find(stage => stage.name === 'top20_fl');
 assert.deepEqual(traceColumn(fellowEatv, top20, top20.outputColumns[0]).paths.map(path => path.at(-1)),
   ['ads.uo_con_gmve_profit_rank_rpt_1h_f.fl_ad_account', 'alps_dws.onvo_dws_cmve_fellow_rank_1d_a.fellow_ad_account']);
+const sourceField = locateSql(fellowSql, fellowEatv, fellowSql.indexOf('fl_ad_account AS fellow_ad_account') + 2);
+assert.equal(sourceField.column.name, 'fellow_ad_account');
 assert.equal(fellowEatv.ctes.find(stage => stage.name === 'total_detail').outputColumns.length, 8);
 assert.equal(fellowEatv.ctes.find(stage => stage.name === 'explode_info').lateral.columns[1], 'fellow_ad_account');
 const fellowSources = traceColumn(fellowEatv, fellowEatv.main, fellowEatv.main.outputColumns[0]).paths;
