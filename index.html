@@ -30,18 +30,19 @@
     .eyebrow { margin: 0 0 8px; color: #48765b; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
     .hero h2 { margin: 0; color: #194c37; font-size: clamp(23px, 2.6vw, 32px); overflow-wrap: anywhere; }
     .hero p:last-child { margin: 10px 0 0; color: #456352; font-size: 13px; line-height: 1.6; }
-    .selection { margin-bottom: 20px; padding: 18px; border: 1px solid #b9d9c4; border-radius: 14px; background: #f5faf5; }
+    .selection { padding: 18px; border: 1px solid #b9d9c4; border-radius: 14px; background: #f5faf5; }
     .selection pre { max-height: 42vh; overflow: auto; padding: 12px; border-radius: 8px; background: white; font-size: 12px; white-space: pre; }
     .selection-crumbs, .upstream-links { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0 0 16px; }
     .selection-crumbs button, .upstream-links button, .upstream-links span { padding: 7px 9px; border-radius: 8px; background: white; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
     .selection-crumbs b { color: #86a391; }
     .upstream-group { margin: 10px 0 15px; padding: 12px; border: 1px solid #dce9df; border-radius: 10px; }
     .upstream-group h3 { margin-bottom: 10px; font-size: 13px; }
-    .lineage-tree { margin: 8px 0 14px; }
-    .lineage-tree-item { margin: 6px 0; }
-    .lineage-tree-children { border-left: 2px solid #b8d4bf; }
-    .lineage-tree-children.branching { margin-left: 10px; padding-left: 12px; }
-    .lineage-tree-label { display: inline-block; max-width: 100%; padding: 6px 9px; border-radius: 7px; background: white; color: #29513a; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .lineage-tree { margin: 8px 0 0; }
+    .lineage-route { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+    .lineage-route b { color: #87a993; font-size: 12px; }
+    .lineage-forks { margin: 8px 0 12px 10px; padding-left: 14px; border-left: 2px solid #b8d4bf; }
+    .lineage-forks > .lineage-route { margin: 10px 0; }
+    .lineage-tree-label { display: inline-block; max-width: 100%; padding: 7px 9px; border-radius: 7px; background: white; color: #29513a; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
     .lineage-tree-label.branch { background: #e5f1e8; font-weight: 700; }
     .lineage-tree-label.leaf { background: #dceee1; font-weight: 700; }
     button.lineage-tree-label { text-align: left; cursor: pointer; }
@@ -57,28 +58,12 @@
     .calc-card p { margin: 6px 0 0; color: #536359; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .calc-card details { margin: 7px 0 0; padding: 0; border: 0; }
     .calc-card pre { margin: 7px 0 0; font-size: 11px; }
-    .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 0 0 22px; }
-    .flow span { padding: 7px 9px; border-radius: 8px; background: #f0f3ef; color: #46604d; font-size: 12px; }
-    .flow button { padding: 7px 9px; border: 0; border-radius: 8px; background: #eaf5eb; color: #24583d; font-size: 12px; }
-    .flow b { color: #8da395; }
     .cte-link { padding: 0; border: 0; color: #24583d; font: inherit; text-align: left; }
-    .lineage-dialog { width: min(680px, calc(100vw - 32px)); max-height: 80vh; overflow: auto; border: 0; border-radius: 18px; padding: 24px; box-shadow: 0 20px 70px #14271f55; }
-    .lineage-dialog::backdrop { background: #10251da8; }
     .lineage-head { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
     .lineage-head h2 { overflow-wrap: anywhere; }
-    .lineage-path { padding: 11px 13px; margin: 8px 0; border-radius: 8px; background: #f2f7f2; color: #214731; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-    .lineage-prefix { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 8px 0 18px; }
-    .lineage-prefix span { padding: 5px 7px; border-radius: 6px; background: #edf3ed; color: #356046; font-size: 12px; }
-    .lineage-prefix b { color: #90aa97; font-size: 12px; }
-    .lineage-branch { padding: 13px; margin: 9px 0; border: 1px solid #e0e9df; border-radius: 10px; }
-    .lineage-branch h4 { margin: 0 0 8px; color: #24583d; font-size: 14px; }
-    .lineage-table { margin: 9px 0 0; }
-    .lineage-table strong { display: block; margin-bottom: 6px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-    .lineage-table span { display: inline-block; max-width: 100%; margin: 2px 5px 2px 0; padding: 5px 7px; border-radius: 6px; background: #f2f7f2; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-    .path-node + .path-node::before { content: '↓'; display: block; color: #759782; }
-    .path-node:last-child { font-weight: 700; }
-    .lineage-dialog pre { max-height: 220px; overflow: auto; padding: 12px; border-radius: 8px; background: #f7f8f5; font-size: 12px; }
-    .lineage-dialog pre.cte-source { max-height: 42vh; white-space: pre; overflow-wrap: normal; }
+    .steps-disclosure { margin: 20px 0; }
+    .steps-disclosure summary { padding: 13px 15px; border-radius: 10px; background: #eef5ee; color: #24583d; font-size: 14px; }
+    .steps-disclosure[open] summary { margin-bottom: 12px; }
     .step { border: 1px solid #e5eae3; border-radius: 14px; padding: 17px; margin: 12px 0; }
     .set-branch { padding: 11px 13px; margin: 9px 0; border-radius: 9px; background: #f6f9f5; }
     .set-branch strong { font-size: 13px; color: #24583d; }
@@ -124,7 +109,6 @@
       <div id="result" class="empty">粘贴 SQL 后，点击「解读 SQL」。</div>
     </section>
   </main>
-  <dialog id="lineage" class="lineage-dialog" aria-label="来源详情"></dialog>
   <script src="./parser.js"></script>
   <script>
 
@@ -146,7 +130,6 @@ WHERE a.datetime = 'latest'
   AND DATE(a.activity_time) BETWEEN DATE '2026-06-25' AND DATE '2026-09-22';`;
     const input = document.getElementById('sql');
     const output = document.getElementById('result');
-    const lineageDialog = document.getElementById('lineage');
     let activeData, activeSql = '';
     const el = (tag, className, value) => {
       const node = document.createElement(tag);
@@ -154,105 +137,6 @@ WHERE a.datetime = 'latest'
       if (value !== undefined) node.textContent = value;
       return node;
     };
-    function openLineage(title) {
-      lineageDialog.replaceChildren();
-      const head = el('div', 'lineage-head');
-      const close = el('button', '', '关闭');
-      close.addEventListener('click', () => lineageDialog.close());
-      head.append(el('h2', '', title), close);
-      lineageDialog.append(head);
-      if (!lineageDialog.open) lineageDialog.showModal();
-    }
-    function showColumn(data, stage, column) {
-      const traced = traceColumn(data, stage, column);
-      openLineage(`字段来源 · ${column.name}`);
-      lineageDialog.append(el('p', 'group-label', 'SQL 表达式'), el('pre', '', traced.expression));
-      const paths = traced.paths;
-      let prefixLength = 0;
-      while (paths.length > 1 && paths.every(path => path.length > prefixLength && path[prefixLength] === paths[0][prefixLength])) prefixLength++;
-      if (prefixLength) {
-        lineageDialog.append(el('p', 'group-label', '公共路径'));
-        const prefix = el('div', 'lineage-prefix');
-        paths[0].slice(0, prefixLength).forEach((node, i) => {
-          if (i) prefix.append(el('b', '', '→'));
-          prefix.append(el('span', '', /^(CTE |最终输出\.)/.test(node) ? node.slice(0, node.lastIndexOf('.')) : node));
-        });
-        lineageDialog.append(prefix);
-      }
-      const sourceList = selectedPaths => {
-        const groups = new Map();
-        [...new Set(selectedPaths.map(path => path.at(-1)))].forEach(source => {
-          const dot = source.lastIndexOf('.');
-          const table = dot > 0 && !/^(CTE |最终输出\.|分支 |LATERAL VIEW |常量：)/.test(source) ? source.slice(0, dot) : '';
-          const field = table ? source.slice(dot + 1) : source;
-          if (!groups.has(table)) groups.set(table, []);
-          groups.get(table).push(field);
-        });
-        const box = el('div');
-        groups.forEach((fields, table) => {
-          const group = el('div', 'lineage-table');
-          if (table) group.append(el('strong', '', table));
-          fields.forEach(field => group.append(el('span', '', field)));
-          box.append(group);
-        });
-        return box;
-      };
-      const branches = new Map();
-      paths.forEach(path => {
-        const label = path[prefixLength];
-        if (!branches.has(label)) branches.set(label, []);
-        branches.get(label).push(path);
-      });
-      const byBranch = branches.size > 1 && [...branches.keys()].every(label => /^分支 \d/.test(label || ''));
-      lineageDialog.append(el('h3', '', byBranch ? `按分支查看源字段（${branches.size}）` : '源字段'));
-      if (byBranch) branches.forEach((branchPaths, label) => {
-        const card = el('section', 'lineage-branch');
-        card.append(el('h4', '', label.replace(/\.[^.]+$/, '')), sourceList(branchPaths));
-        lineageDialog.append(card);
-      });
-      else lineageDialog.append(sourceList(paths));
-      const full = el('details');
-      full.append(el('summary', '', `展开完整路径（${paths.length} 条）`));
-      paths.forEach(path => {
-        const row = el('div', 'lineage-path');
-        path.forEach(node => row.append(el('div', 'path-node', node)));
-        full.append(row);
-      });
-      lineageDialog.append(full);
-      lineageDialog.append(el('p', 'small', '根据 SQL 文本推断字段值来源；筛选和关联如何影响记录，可查看下方处理步骤。未加别名且来源不唯一的字段，需要结合表结构核对。'));
-    }
-    function showStage(data, stage) {
-      openLineage(`CTE 详情 · ${stage.name}${stage.scope ? `（${stage.scope} 内）` : ''}`);
-      lineageDialog.append(el('p', 'group-label', 'CTE 源代码'), el('pre', 'cte-source', stage.sourceSql));
-      const direct = stage.branches
-        ? stage.branches.map((branch, i) => `分支 ${i + 1}：${branch.sources.join(' · ') || '无源表'}`)
-        : stage.sourceDetails.map(source => source.name);
-      lineageDialog.append(el('p', 'group-label', '直接读取'));
-      direct.forEach(item => lineageDialog.append(el('div', 'lineage-path', item)));
-      if (!direct.length) lineageDialog.append(el('div', 'lineage-path', '无源表'));
-      if (stage.lateral) lineageDialog.append(el('p', 'note', `LATERAL VIEW 将 ${stage.lateral.mapField || '输入'} 展开为 ${stage.lateral.columns.join('、')}。`));
-      const roots = new Set();
-      const collect = (current, owner, visited = new Set()) => {
-        if (current.branches) return current.branches.forEach(branch => collect(branch, owner, visited));
-        current.sourceDetails.forEach(source => {
-          if (source.query?.main) return collect(source.query.main, owner, visited);
-          const upstream = resolveCte(data, owner, source.name);
-          if (upstream && !visited.has(upstream)) collect(upstream, upstream, new Set([...visited, upstream]));
-          else if (!upstream) roots.add(source.name);
-        });
-      };
-      collect(stage, stage);
-      lineageDialog.append(el('p', 'group-label', '上游源表'));
-      lineageDialog.append(el('div', 'lineage-path', [...roots].join(' · ') || '仅使用常量或无法识别上游源表'));
-      lineageDialog.append(el('h3', '', `输出字段（${stage.outputColumns.length}）`));
-      const fields = el('div', 'field-grid');
-      stage.outputColumns.forEach(column => {
-        const button = el('button', 'field', column.name);
-        button.addEventListener('click', () => showColumn(data, stage, column));
-        fields.append(button);
-      });
-      lineageDialog.append(fields, el('p', 'small', '点击字段可继续查看它的来源路径。'));
-    }
     function shortCondition(raw) {
       const names = {
         activity_time: '活动时间', activity_type: '活动类型', call_duration: '通话时长',
@@ -302,7 +186,7 @@ WHERE a.datetime = 'latest'
       const heading = el('h3');
       if (stage.name) {
         const button = el('button', 'cte-link', `${title}${stage.scope ? `（${stage.scope} 内）` : ''} · 查看来源`);
-        button.addEventListener('click', () => showStage(data, stage));
+        button.addEventListener('click', () => renderSelection(data, { type: 'cte', stage }));
         heading.append(button);
       } else heading.textContent = title;
       head.append(el('span', 'step-num', String(number).padStart(2, '0')), heading);
@@ -346,7 +230,7 @@ WHERE a.datetime = 'latest'
       const fields = el('div', 'field-grid');
       stage.outputColumns.forEach(column => {
         const field = el('button', `field${column.calculated ? ' calculated' : ''}`, column.name);
-        field.addEventListener('click', () => showColumn(data, stage, column));
+        field.addEventListener('click', () => renderSelection(data, { type: 'field', stage, column }));
         if (column.note || column.calculated) field.append(el('small', '', column.note || '计算字段'));
         fields.append(field);
       });
@@ -431,7 +315,7 @@ WHERE a.datetime = 'latest'
       hero.append(el('p', '', summary));
       if (main && main.metric.kind !== 'fields') {
         const metric = el('button', '', '查看指标来源');
-        metric.addEventListener('click', () => showColumn(data, main, { ...main.outputColumns[0], name: main.metric.label }));
+        metric.addEventListener('click', () => renderSelection(data, { type: 'field', stage: main, column: { ...main.outputColumns[0], name: main.metric.label } }));
         hero.append(metric);
       }
       output.append(hero);
@@ -448,56 +332,43 @@ WHERE a.datetime = 'latest'
       }
       const outputs = renderOutputs(data, focus, data.write ? '写入 SELECT 的字段' : main ? '输出字段' : `${focus.name} 的字段`);
       if (outputs) output.append(outputs);
-      const flow = el('div', 'flow');
-      const labels = main
-        ? [...data.ctes, main.whereParts.length ? '筛选主表' : `读取 ${main.sources[0] || '数据'}`, ...main.joins.map(j => `${j.type} JOIN`), data.write ? data.write.mode === 'OVERWRITE' ? '覆盖写入' : '追加写入' : main.metric.kind === 'distinct' ? '去重计数' : main.group ? '分组输出' : '输出结果']
-        : [...data.ctes, '待补最终 SELECT'];
-      labels.forEach((item, i) => {
-        if (i) flow.append(el('b', '', '→'));
-        if (typeof item !== 'string') {
-          const button = el('button', '', `CTE ${item.name}${item.scope ? `（${item.scope} 内）` : ''}`);
-          button.addEventListener('click', () => showStage(data, item));
-          flow.append(button);
-        } else flow.append(el('span', '', item));
-      });
-      output.append(flow);
+      const steps = el('details', 'steps-disclosure');
       let number = 0;
       data.ctes.forEach(stage => {
-        output.append(renderSource(data, stage, ++number, `生成 CTE ${stage.name}`));
-        stage.joins.forEach(join => output.append(renderJoin(join, ++number)));
+        steps.append(renderSource(data, stage, ++number, `生成 CTE ${stage.name}`));
+        stage.joins.forEach(join => steps.append(renderJoin(join, ++number)));
         const processing = renderProcessing(stage, number + 1);
-        if (processing) { number++; output.append(processing); }
+        if (processing) { number++; steps.append(processing); }
       });
       if (main) {
-        output.append(renderSource(data, main, ++number, main.whereParts.length ? '筛选主表' : '读取主表'));
-        main.joins.forEach(join => output.append(renderJoin(join, ++number)));
+        steps.append(renderSource(data, main, ++number, main.whereParts.length ? '筛选主表' : '读取主表'));
+        main.joins.forEach(join => steps.append(renderJoin(join, ++number)));
         const processing = renderProcessing(main, number + 1);
-        if (processing) output.append(processing);
+        if (processing) { number++; steps.append(processing); }
         if (data.write) {
           const box = el('div', 'step');
           const head = el('div', 'step-head');
           head.append(el('span', 'step-num', String(++number).padStart(2, '0')), el('h3', '', '写入目标'));
           box.append(head, el('p', 'table-name', data.write.target));
           if (data.write.partition) box.append(el('span', 'chip', `分区：${data.write.partition}`));
-          output.append(box);
+          steps.append(box);
         }
       }
+      steps.prepend(el('summary', '', `查看处理步骤（${number}）`));
+      output.append(steps);
       const warnings = [...new Set(stages.flatMap(s => s.warnings))];
       if (warnings.length) {
         output.append(el('h3', '', '需要核对'));
         warnings.forEach(message => output.append(el('p', 'warning', message)));
       }
-      const original = el('details');
-      original.append(el('summary', '', '查看原始 SQL'), el('pre', '', input.value));
-      output.append(original, el('p', 'small', '静态解读；结果数量、字段类型和关联唯一性需要查表验证。'));
+      output.append(el('p', 'small', '静态解读；结果数量、字段类型和关联唯一性需要查表验证。'));
     }
     function renderSelection(data, hit, trail = [hit]) {
-      output.querySelector('.selection')?.remove();
       const panel = el('section', 'selection');
       const head = el('div', 'lineage-head');
       head.append(el('h2', '', hit.type === 'cte' ? `CTE · ${hit.stage.name}` : `字段 · ${hit.column.name}`));
-      const close = el('button', '', '关闭');
-      close.addEventListener('click', () => panel.remove());
+      const close = el('button', '', '返回总览');
+      close.addEventListener('click', () => render(data));
       head.append(close);
       panel.append(head);
       if (trail.length > 1) {
@@ -536,8 +407,8 @@ WHERE a.datetime = 'latest'
         panel.append(el('p', 'group-label', 'CTE 源代码'), el('pre', '', hit.stage.sourceSql));
       } else {
         const traced = traceColumn(data, hit.stage, hit.column);
-        panel.append(el('p', 'group-label', 'SQL 表达式'), el('pre', '', traced.expression));
-        panel.append(el('p', 'group-label', '上游路径 · 共同步骤只显示一次'));
+        if (traced.expression.trim() !== hit.column.name) panel.append(el('p', 'group-label', 'SQL 表达式'), el('pre', '', traced.expression));
+        panel.append(el('p', 'group-label', traced.paths.length === 1 ? '字段来源' : '字段来源 · 共用步骤已合并'));
         const root = new Map();
         traced.paths.forEach(path => {
           let level = root;
@@ -548,28 +419,35 @@ WHERE a.datetime = 'latest'
         });
         const tree = el('div', 'lineage-tree');
         const draw = (nodes, parent) => nodes.forEach((children, label) => {
-          const item = el('div', 'lineage-tree-item');
-          const match = label.match(/^CTE ([^.（]+)(?:（(.+) 内）)?\./);
-          const upstream = match && data.ctes.find(stage => stage.name === match[1] && (stage.scope || '') === (match[2] || ''));
-          const kind = /^分支 \d/.test(label) ? 'branch' : children.size ? '' : 'leaf';
-          const node = el(upstream ? 'button' : 'span', `lineage-tree-label ${kind}`, label);
-          if (upstream) node.addEventListener('click', () => renderSelection(data, { type: 'cte', stage: upstream }, [...trail, { type: 'cte', stage: upstream }]));
-          item.append(node);
-          if (children.size) {
-            const nested = el('div', `lineage-tree-children${children.size > 1 ? ' branching' : ''}`);
-            draw(children, nested);
-            item.append(nested);
+          const route = el('div', 'lineage-route');
+          let current = label;
+          while (true) {
+            const match = current.match(/^CTE ([^.（]+)(?:（(.+) 内）)?\.(.+)$/);
+            const upstream = match && data.ctes.find(stage => stage.name === match[1] && (stage.scope || '') === (match[2] || ''));
+            const name = match ? `${match[1]}${match[2] ? `（${match[2]} 内）` : ''}` : '';
+            const display = match ? `${name}${match[3] === hit.column.name ? '' : `.${match[3]}`}`
+              : current.startsWith('最终输出.') ? '最终输出'
+              : current.replace(/^(分支 \d+(?:（[^）]+）)?)\..+$/, '$1');
+            const kind = /^分支 \d/.test(current) ? 'branch' : children.size ? '' : 'leaf';
+            const node = el(upstream ? 'button' : 'span', `lineage-tree-label ${kind}`, display);
+            node.title = current;
+            if (upstream) node.addEventListener('click', () => renderSelection(data, { type: 'cte', stage: upstream }, [...trail, { type: 'cte', stage: upstream }]));
+            if (route.childElementCount) route.append(el('b', '', '→'));
+            route.append(node);
+            if (children.size !== 1) break;
+            [current, children] = children.entries().next().value;
           }
-          parent.append(item);
+          parent.append(route);
+          if (children.size) {
+            const forks = el('div', 'lineage-forks');
+            draw(children, forks);
+            parent.append(forks);
+          }
         });
         draw(root, tree);
         panel.append(tree);
-        const full = el('details');
-        full.append(el('summary', '', `展开完整路径（${traced.paths.length} 条）`));
-        traced.paths.forEach(path => full.append(el('div', 'lineage-path', path.join(' → '))));
-        panel.append(full);
       }
-      output.prepend(panel);
+      output.replaceChildren(panel);
       panel.scrollIntoView({ block: 'start' });
     }
     input.addEventListener('click', () => {
