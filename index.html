@@ -95,18 +95,104 @@
     summary { cursor: pointer; font-weight: 650; }
     pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
     .small { color: #718076; font-size: 12px; line-height: 1.6; }
-    @media (max-width: 850px) { main { grid-template-columns: 1fr; } .input-card { position: static; } .editor { height: 300px; } }
+    :root { color: #233b39; background: #f1f5f4; }
+    header { padding: 23px max(24px, calc((100vw - 1712px)/2)); background: #fff; color: #163d38; border-bottom: 1px solid #dfe8e5; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    .brand { display: flex; align-items: center; gap: 13px; }
+    .brand-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; color: #fff; background: #1b6557; font: 700 17px ui-monospace, monospace; }
+    h1 { font-size: 23px; letter-spacing: -.04em; }
+    header p { margin: 4px 0 0; color: #6c817b; font-size: 12px; }
+    .local-badge { padding: 8px 12px; border-radius: 20px; background: #eef6f1; color: #39725a; font-size: 12px; white-space: nowrap; }
+    .local-badge::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; background: #4c9870; border-radius: 50%; }
+    main { margin-top: 22px; grid-template-columns: minmax(380px, .85fr) minmax(0, 1.35fr); gap: 22px; }
+    .card { padding: 22px; border-color: #dce7e3; border-radius: 17px; box-shadow: 0 4px 18px #163d3804; }
+    .input-card h2 { font-size: 16px; margin-bottom: 10px; }
+    .intro { font-size: 12px; line-height: 1.7; }
+    .editor { background: #162f30; border-color: #162f30; border-radius: 11px; height: clamp(320px, calc(100vh - 345px), 800px); }
+    .editor textarea { color: #dcece4; caret-color: #8ae1c3; font-size: 12px; }
+    .editor textarea::placeholder { color: #86a4a0; }
+    .editor pre { font-size: 12px; }
+    .editor mark { background: #4d716a; }
+    .editor mark.current { background: #7c9367; }
+    .input-card .small { font-size: 11px; margin-bottom: 8px; }
+    .actions { margin-top: 12px; gap: 8px; }
+    button { border-color: #d2e1db; padding: 9px 13px; font-size: 12px; }
+    button.primary { background: #236d5b; border-color: #236d5b; }
+    .privacy { margin-top: 14px; font-size: 11px; }
+    .hero { padding: 18px 20px; background: #edf6f2; margin-bottom: 16px; border: 1px solid #dae9e2; }
+    .hero h2 { font-size: 24px; }
+    .hero button { margin-top: 12px; }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 16px 0 20px; }
+    .stat { border: 1px solid #e1eae7; border-radius: 10px; padding: 12px; }
+    .stat strong { display: block; font-size: 24px; letter-spacing: -.04em; line-height: 1.1; }
+    .stat span { display: block; margin-top: 6px; font-size: 11px; color: #7c8e87; }
+    .visual-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 16px 0 12px; }
+    .visual-heading h3 { margin: 0; font-size: 15px; }
+    .visual-heading span { font-size: 11px; color: #81918c; }
+    .legend { display: flex; flex-wrap: wrap; gap: 15px; font-size: 11px; color: #72877e; margin: 0 0 12px; }
+    .legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 3px; margin-right: 5px; background: #7594ad; }
+    .legend .cte::before { background: #5b9b85; }
+    .legend .output::before { background: #245e50; }
+    .legend .branch::before { background: #b79b67; }
+    .graph-shell { position: relative; border: 1px solid #dfe9e5; border-radius: 12px; overflow: hidden; background: #f8fbfa; }
+    .graph-controls { display: flex; align-items: center; justify-content: flex-end; gap: 5px; padding: 7px 10px; border-bottom: 1px solid #e7eeeb; background: #fff; }
+    .graph-controls button { padding: 4px 9px; border-radius: 5px; font-size: 11px; }
+    .graph-controls span { font-size: 10px; min-width: 37px; text-align: right; color: #8b9b94; }
+    .graph-dialog { width: calc(100vw - 48px); max-width: 1800px; height: calc(100vh - 64px); max-height: none; padding: 0; border: 1px solid #cbded3; border-radius: 14px; box-shadow: 0 24px 80px #0e302944; }
+    .graph-dialog::backdrop { background: #12382e88; backdrop-filter: blur(3px); }
+    .graph-dialog .graph-viewport { max-height: none; height: calc(100% - 40px); }
+    .graph-viewport { overflow: auto; max-height: 450px; min-height: 210px; background-image: radial-gradient(#ccdcd4 .8px, transparent .8px); background-size: 16px 16px; }
+    .graph-viewport svg { display: block; margin: auto; overflow: visible; }
+    .graph-edge path { fill: none; stroke: #a4bab4; stroke-width: 1.5; }
+    .graph-edge text { font-size: 9px; fill: #66837a; paint-order: stroke; stroke: #f8fbfa; stroke-width: 4px; stroke-linejoin: round; }
+    .graph-node { cursor: pointer; transition: opacity .15s; outline: none; }
+    .graph-node[role="group"] { cursor: default; }
+    .graph-node rect { fill: #fff; stroke: #b9cec5; stroke-width: 1.2; }
+    .graph-node.table rect { fill: #edf3f9; stroke: #c0d0df; }
+    .graph-node.branch rect { fill: #fcf6eb; stroke: #decdaa; }
+    .graph-node.output rect, .graph-node.target rect { fill: #245e50; stroke: #245e50; }
+    .graph-node text { fill: #295245; pointer-events: none; }
+    .graph-node.table text { fill: #45677f; }
+    .graph-node.branch text { fill: #8f7238; }
+    .graph-node.output text, .graph-node.target text { fill: #fff; }
+    .node-kind { font-size: 9px; opacity: .7; }
+    .node-name { font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .node-detail { font-size: 9px; opacity: .75; }
+    .graph-node:hover rect, .graph-node:focus-visible rect, .graph-node.selected rect { stroke: #35a980; stroke-width: 3; }
+    .graph-node.dimmed, .graph-edge.dimmed { opacity: .22; }
+    .graph-hint { font-size: 11px; color: #7c9187; margin: 10px 0 18px; }
+    .inspector:empty { display: none; }
+    .selection { margin: 18px 0; background: #f9fcfa; border-color: #d5e5dc; }
+    .selection h2 { font-size: 16px; margin-bottom: 16px; }
+    .selection .step { background: #fff; }
+    .stage-operations { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin: 0 0 14px; }
+    .stage-operations span { padding: 7px 10px; border: 1px solid #deebe4; border-radius: 7px; background: #fff; font-size: 11px; color: #42695a; }
+    .stage-operations b { color: #aac0b4; font-size: 12px; }
+    .join-visual { display: flex; gap: 18px; align-items: center; margin: 10px 0 15px; }
+    .join-visual svg { flex: 0 0 110px; }
+    .join-visual p { font-size: 12px; line-height: 1.7; color: #637d6f; margin: 0; }
+    .outputs { margin-top: 20px; }
+    .outputs h3 { font-size: 15px; }
+    .field { font-size: 11px; border-color: #dee9e3; background: #fff; }
+    .field small { font-size: 10px; }
+    .empty { min-height: 490px; padding: 24px; }
+    .empty-graphic { display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 26px; }
+    .empty-graphic span { width: 62px; height: 48px; display: grid; place-items: center; background: #edf4ef; border: 1px solid #d0dfd6; border-radius: 10px; color: #53836c; font: 12px ui-monospace, monospace; }
+    .empty-graphic b { font-weight: 400; color: #a1b6aa; }
+    .empty h2 { font-size: 19px; margin-bottom: 9px; color: #426454; }
+    .empty p { font-size: 12px; line-height: 1.8; margin: 0; }
+    @media (max-width: 1000px) { main { grid-template-columns: minmax(300px, .8fr) minmax(0, 1fr); gap: 15px; padding: 0 16px 32px; } .card { padding: 16px; } .stat { padding: 10px 8px; } }
+    @media (max-width: 760px) { header { padding: 18px; } header p { max-width: 240px; } .local-badge { display: none; } main { grid-template-columns: 1fr; } .input-card { position: static; } .editor { height: 300px; } .stats { gap: 6px; } .graph-viewport { max-height: 350px; } .visual-heading span { display: none; } }
   </style>
 </head>
 <body>
   <header>
-    <h1>SQL 解读器</h1>
-    <p>粘贴 SQL 脚本，快速看清数据从哪里来、经过哪些处理，以及哪些结论还需要查数据才能确认。</p>
+    <div class="brand"><span class="brand-icon" aria-hidden="true">↳</span><div><h1>SQL 解读器</h1><p>把 SQL 变成一张看得懂的数据地图。</p></div></div>
+    <span class="local-badge">在你的浏览器里解析</span>
   </header>
   <main>
     <section class="card input-card" aria-label="SQL 输入">
       <h2>你的 SQL</h2>
-      <p class="intro">支持 SELECT、WITH CTE、集合运算、INSERT … SELECT，以及前置 ALTER TABLE SET TBLPROPERTIES 和 %trino / %sql。只做静态解读。</p>
+      <p class="intro">粘贴查询或脚本，查看数据流、字段来源和关联逻辑。支持 CTE、JOIN、集合运算与 INSERT … SELECT。</p>
       <div id="find-bar" class="find-bar" role="search" aria-label="在 SQL 中查找" hidden>
         <input id="find-input" type="search" aria-label="查找 SQL 文本" placeholder="查找 SQL 文本">
         <span id="find-count" aria-live="polite">0 / 0</span>
@@ -120,17 +206,19 @@
       </div>
       <p class="small">⌘↵ 解读 · ⌘F 查找 · 点击 CTE 或字段查看来源并高亮同词。</p>
       <div class="actions">
-        <button id="analyze" class="primary">解读 SQL</button>
+        <button id="analyze" class="primary">生成数据地图 ↗</button>
         <button id="example">载入示例</button>
+        <button id="flow-example">CTE 示例</button>
         <button id="clear">清空</button>
       </div>
       <p class="privacy">本地解析 · SQL 不会上传 · 不连接数据库</p>
     </section>
     <section class="card" aria-label="解读结果">
-      <div id="result" class="empty">粘贴 SQL 后，点击「解读 SQL」。</div>
+      <div id="result" class="empty"><div class="empty-graphic" aria-hidden="true"><span>源表</span><b>→</b><span>CTE</span><b>→</b><span>输出</span></div><h2>先看全貌，再追来源</h2><p>粘贴 SQL，生成可点击的数据地图。<br>也可以载入示例，试试字段追溯。</p></div>
     </section>
   </main>
   <script src="./parser.js"></script>
+  <script src="./visual.js"></script>
   <script>
 
     const sample = `SELECT
@@ -150,6 +238,30 @@ WHERE a.datetime = 'latest'
   AND a.activity_level = 'F'
   AND DATE(a.activity_time) BETWEEN DATE '2026-06-25' AND DATE '2026-09-22';`;
     const input = document.getElementById('sql');
+    const flowSample = `WITH recent_activity AS (
+  SELECT user_code, activity_type, call_duration
+  FROM dwm.ue_sales_activity_wide_1h_f
+  WHERE datetime = 'latest'
+    AND activity_time >= current_timestamp - INTERVAL '30' DAY
+), valid_users AS (
+  SELECT user_code, COUNT(*) AS interaction_count
+  FROM recent_activity
+  WHERE call_duration > 0
+  GROUP BY user_code
+), user_profile AS (
+  SELECT user_code, city FROM dim.user_profile
+  WHERE datetime = 'latest'
+), city_summary AS (
+  SELECT p.city, COUNT(DISTINCT v.user_code) AS active_users,
+    SUM(v.interaction_count) AS total_interactions
+  FROM valid_users v
+  LEFT JOIN user_profile p ON v.user_code = p.user_code
+  GROUP BY p.city
+)
+SELECT city, active_users, total_interactions
+FROM city_summary
+ORDER BY active_users DESC
+LIMIT 10;`;
     const output = document.getElementById('result');
     const highlights = document.getElementById('sql-highlights');
     const findBar = document.getElementById('find-bar');
@@ -246,8 +358,16 @@ WHERE a.datetime = 'latest'
       const head = el('div', 'step-head');
       head.append(el('span', 'step-num', String(number).padStart(2, '0')), el('h3', '', `匹配关联表 · ${join.type} JOIN`));
       box.append(head, el('p', 'table-name', `${join.source}${join.alias ? ` · 别名 ${join.alias}` : ''}`));
-      if (join.type === 'INNER') box.append(el('p', 'note', '只有能匹配关联表的主表记录会进入统计。'));
-      if (join.type === 'LEFT') box.append(el('p', 'note', '主表记录都会保留，未匹配的关联表字段为空。'));
+      const joinNotes = { INNER: '保留两侧匹配的记录', LEFT: '保留左侧全部记录，补充右侧匹配字段', RIGHT: '保留右侧全部记录，补充左侧匹配字段', FULL: '保留两侧全部记录，未匹配字段为空', CROSS: '两侧记录逐一组合，形成笛卡尔积' };
+      const illustration = el('div', 'join-visual');
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 120 72');
+      svg.setAttribute('aria-label', `${join.type} JOIN 的记录保留示意`);
+      svg.setAttribute('role', 'img');
+      const clipId = `join-clip-${renderJoin.serial = (renderJoin.serial || 0) + 1}`;
+      svg.innerHTML = `<defs><clipPath id="${clipId}"><circle cx="43" cy="31" r="24"/></clipPath></defs><circle cx="43" cy="31" r="24" fill="${['LEFT', 'FULL', 'CROSS'].includes(join.type) ? '#a4d8bf' : '#edf3ef'}" stroke="#74a88f"/><circle cx="77" cy="31" r="24" fill="${['RIGHT', 'FULL', 'CROSS'].includes(join.type) ? '#a4d8bf' : '#edf3ef'}" stroke="#74a88f"/><circle cx="77" cy="31" r="24" fill="#58a885" clip-path="url(#${clipId})"/><text x="28" y="69" fill="#7a8e83" font-size="9">左侧</text><text x="69" y="69" fill="#7a8e83" font-size="9">右侧</text>`;
+      illustration.append(svg, el('p', '', `${joinNotes[join.type] || join.type}。${['LEFT', 'RIGHT', 'FULL'].includes(join.type) ? '未匹配一侧的字段为 NULL。' : ''}图示表达保留规则，不代表实际行数或匹配比例。`));
+      box.append(illustration);
       box.append(renderConditions(join.predicates, true));
       return box;
     }
@@ -347,6 +467,26 @@ WHERE a.datetime = 'latest'
         hero.append(metric);
       }
       output.append(hero);
+      const graph = buildFlowGraph(data);
+      const stats = el('div', 'stats');
+      const joins = graph.nodes.reduce((sum, node) => sum + (node.stage?.branches ? 0 : node.stage?.joins.length || 0), 0);
+      [[graph.nodes.filter(node => node.kind === 'table').length, '源表'], [data.ctes.length, 'CTE'], [joins, '关联'], [focus.outputColumns.length, '输出字段']].forEach(([count, label]) => {
+        const stat = el('div', 'stat');
+        stat.append(el('strong', '', String(count)), el('span', '', label));
+        stats.append(stat);
+      });
+      output.append(stats);
+      const heading = el('div', 'visual-heading');
+      heading.append(el('h3', '', '数据流地图'), el('span', '', '从左到右 · 来源 → 处理 → 输出'));
+      const legend = el('div', 'legend');
+      [['table', '源表'], ['cte', 'CTE / 子查询'], ['branch', '集合分支'], ['output', '输出 / 写入']].forEach(([kind, label]) => legend.append(el('span', kind, label)));
+      output.append(heading, legend, renderGraph(graph, node => {
+        selectedWord = node.stage?.name || (node.kind === 'table' ? node.label.split('.').at(-1) : '');
+        showHighlights();
+        if (node.stage) renderSelection(data, { type: 'cte', stage: node.stage });
+        else renderTableSelection(data, node, graph);
+      }), el('p', 'graph-hint', '点击节点查看逻辑，其他分支会淡出。图较大时可缩放或滚动；这是依赖关系图，不是执行计划。'));
+      output.append(el('div', 'inspector'));
       if (data.magic || data.setup.length) {
         const setup = el('div', 'step');
         setup.append(el('h3', '', '脚本前置部分'));
@@ -391,12 +531,36 @@ WHERE a.datetime = 'latest'
       }
       output.append(el('p', 'small', '静态解读；结果数量、字段类型和关联唯一性需要查表验证。'));
     }
+    function showInspector(panel) {
+      const inspector = output.querySelector('.inspector');
+      if (inspector) inspector.replaceChildren(panel);
+      else output.replaceChildren(panel);
+      panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    function renderTableSelection(data, node, graph) {
+      const panel = el('section', 'selection');
+      panel.append(el('h2', '', node.kind === 'target' ? '写入目标' : '源表'), el('p', 'table-name', node.label));
+      const links = el('div', 'upstream-links');
+      graph.edges.filter(edge => edge.from === node.id).forEach(edge => {
+        const next = graph.nodes.find(item => item.id === edge.to);
+        const button = el('button', '', `→ ${next.label} · ${edge.label}`);
+        button.addEventListener('click', () => renderSelection(data, { type: 'cte', stage: next.stage }));
+        links.append(button);
+      });
+      if (node.kind === 'target') panel.append(el('p', 'note', `${data.write.mode === 'OVERWRITE' ? '覆盖写入' : '追加写入'}${data.write.partition ? ` · 分区 ${data.write.partition}` : ''}`));
+      panel.append(links, el('p', 'small', '表名来自 SQL；未读取表结构或执行查询。'));
+      showInspector(panel);
+    }
     function renderSelection(data, hit, trail = [hit]) {
       const panel = el('section', 'selection');
       const head = el('div', 'lineage-head');
-      head.append(el('h2', '', hit.type === 'cte' ? `CTE · ${hit.stage.name}` : `字段 · ${hit.column.name}`));
-      const close = el('button', '', '返回总览');
-      close.addEventListener('click', () => render(data));
+      head.append(el('h2', '', hit.type === 'cte' ? hit.stage.name ? `CTE · ${hit.stage.name}${hit.stage.scope ? `（${hit.stage.scope} 内）` : ''}` : '查询节点' : `字段 · ${hit.column.name}`));
+      const close = el('button', '', '关闭详情');
+      close.addEventListener('click', () => {
+        panel.remove();
+        output.querySelectorAll('.dimmed, .selected').forEach(node => node.classList.remove('dimmed', 'selected'));
+        output.querySelectorAll('[aria-pressed]').forEach(node => node.setAttribute('aria-pressed', 'false'));
+      });
       head.append(close);
       panel.append(head);
       if (trail.length > 1) {
@@ -414,6 +578,10 @@ WHERE a.datetime = 'latest'
         panel.append(crumbs);
       }
       if (hit.type === 'cte') {
+        const operations = el('div', 'stage-operations');
+        const labels = ['读取来源', hit.stage.joins.length && '关联', hit.stage.whereParts.length && '筛选', hit.stage.lateral && '展开', hit.stage.group && '分组计算', hit.stage.having && '组后筛选', hit.stage.qualify && '窗口筛选', hit.stage.order && '排序', hit.stage.limit && `取 ${hit.stage.limit} 行`, '输出字段'].filter(Boolean);
+        labels.forEach((label, i) => { if (i) operations.append(el('b', '', '→')); operations.append(el('span', '', label)); });
+        panel.append(operations);
         panel.append(el('p', 'group-label', '上游一层 · 点击 CTE 继续追溯'));
         const branches = hit.stage.branches || [hit.stage];
         branches.forEach((branch, i) => {
@@ -432,11 +600,31 @@ WHERE a.datetime = 'latest'
           group.append(links);
           panel.append(group);
         });
-        panel.append(el('p', 'group-label', 'CTE 源代码'), el('pre', '', hit.stage.sourceSql));
+        panel.append(renderSource(data, hit.stage, 1, '读取与筛选'));
+        hit.stage.joins.forEach((join, i) => panel.append(renderJoin(join, i + 2)));
+        const processing = renderProcessing(hit.stage, hit.stage.joins.length + 2);
+        if (processing) panel.append(processing);
+        const outputs = renderOutputs(data, hit.stage);
+        if (outputs) panel.append(outputs);
+        if (hit.stage.sourceSql) {
+          const code = el('details');
+          code.append(el('summary', '', '查看 CTE 源代码'), el('pre', '', hit.stage.sourceSql));
+          panel.append(code);
+        }
       } else {
         const traced = traceColumn(data, hit.stage, hit.column);
         if (traced.expression.trim() !== hit.column.name) panel.append(el('p', 'group-label', 'SQL 表达式'), el('pre', '', traced.expression));
         panel.append(el('p', 'group-label', traced.paths.length === 1 ? '字段来源' : '字段来源 · 共用步骤已合并'));
+        panel.append(renderGraph(buildFieldGraph(traced.paths), node => {
+          const match = node.label.match(/^CTE ([^.（]+)(?:（(.+) 内）)?\.(.+)$/);
+          const stage = match && data.ctes.find(stage => stage.name === match[1] && (stage.scope || '') === (match[2] || ''));
+          if (stage) {
+            const column = stage.outputColumns.find(column => column.name === match[3]);
+            if (column) renderSelection(data, { type: 'field', stage, column }, [...trail, { type: 'field', stage, column }]);
+          }
+        }, '字段来源图'));
+        const paths = el('details');
+        paths.append(el('summary', '', '查看完整来源路径'));
         const root = new Map();
         traced.paths.forEach(path => {
           let level = root;
@@ -473,10 +661,13 @@ WHERE a.datetime = 'latest'
           }
         });
         draw(root, tree);
-        panel.append(tree);
+        paths.append(tree);
+        panel.append(paths);
       }
-      output.replaceChildren(panel);
-      panel.scrollIntoView({ block: 'start' });
+      if (hit.type === 'field') selectedWord = hit.column.name;
+      else selectedWord = hit.stage.name || '';
+      showHighlights();
+      showInspector(panel);
     }
     function syncHighlights() {
       highlights.scrollTop = input.scrollTop;
@@ -602,13 +793,19 @@ WHERE a.datetime = 'latest'
       closeFind(false);
       document.getElementById('analyze').click();
     });
+    document.getElementById('flow-example').addEventListener('click', () => {
+      input.value = flowSample;
+      selectedWord = '';
+      closeFind(false);
+      document.getElementById('analyze').click();
+    });
     document.getElementById('clear').addEventListener('click', () => {
       input.value = '';
       selectedWord = '';
       closeFind(false);
       activeSql = '';
       output.className = 'empty';
-      output.textContent = '粘贴 SQL 后，点击「解读 SQL」。';
+      output.innerHTML = '<div class="empty-graphic" aria-hidden="true"><span>源表</span><b>→</b><span>CTE</span><b>→</b><span>输出</span></div><h2>先看全貌，再追来源</h2><p>粘贴 SQL，生成可点击的数据地图。<br>也可以载入示例，试试字段追溯。</p>';
       input.focus();
     });
   </script>

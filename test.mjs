@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import './parser.js';
+import './visual.js';
 const { analyze, traceColumn, locateSql } = globalThis;
 
 const sql = `WITH recent AS (
@@ -234,4 +235,36 @@ assert.equal(locateSql(fellowSql, fellowEatv, fellowSql.indexOf('tmp_mappng AS')
 const clickedFellow = locateSql(fellowSql, fellowEatv, fellowSql.lastIndexOf('SELECT fellow_ad_account') + 10);
 assert.equal(clickedFellow.type, 'field');
 assert.equal(traceColumn(fellowEatv, clickedFellow.stage, clickedFellow.column).paths.length, 8);
-console.log('SQL 解读器检查通过');
+const { buildFlowGraph, buildFieldGraph, layoutGraph } = globalThis;
+const flow = buildFlowGraph(result);
+assert.equal(flow.nodes.filter(node => node.kind === 'table').length, 2);
+const recentNode = flow.nodes.find(node => node.stage === result.ctes[0]);
+const outputNode = flow.nodes.find(node => node.kind === 'output');
+assert.ok(flow.edges.some(edge => edge.from === recentNode.id && edge.to === outputNode.id));
+assert.ok(flow.edges.some(edge => edge.to === outputNode.id && edge.label === 'LEFT JOIN · m'));
+const fullFlow = buildFlowGraph(fellowEatv);
+assert.equal(fullFlow.nodes.filter(node => node.kind === 'cte' && node.label === 'tmp').length, 2);
+const targetNode = fullFlow.nodes.find(node => node.kind === 'target');
+assert.equal(targetNode.label, fellowEatv.write.target);
+assert.ok(fullFlow.edges.some(edge => edge.to === targetNode.id && edge.label === '写入'));
+assert.ok(fullFlow.nodes.some(node => node.kind === 'branch'));
+const positions = layoutGraph(fullFlow).positions;
+fullFlow.edges.forEach(edge => assert.ok(positions.get(edge.from).x < positions.get(edge.to).x, `依赖应从左到右：${edge.from} → ${edge.to}`));
+const scopedFlow = buildFlowGraph(complex);
+const secondNode = scopedFlow.nodes.find(node => node.stage === complex.ctes.find(stage => stage.name === 'second'));
+const secondTmp = scopedFlow.nodes.find(node => node.stage === complex.ctes.find(stage => stage.name === 'tmp' && stage.scope === 'second'));
+assert.ok(scopedFlow.edges.some(edge => edge.from === secondTmp.id && edge.to === secondNode.id));
+const fieldFlow = buildFieldGraph(traceColumn(result, result.main, result.main.outputColumns[0]).paths);
+assert.equal(fieldFlow.nodes.length, 3);
+assert.equal(fieldFlow.edges.length, 2);
+const fieldPositions = layoutGraph(fieldFlow).positions;
+fieldFlow.edges.forEach(edge => assert.ok(fieldPositions.get(edge.from).x < fieldPositions.get(edge.to).x));
+const sharedPaths = buildFieldGraph([['输出.x', 'CTE a.x', 't1.x'], ['输出.x', 'CTE a.x', 't2.x']]);
+assert.equal(sharedPaths.nodes.length, 4);
+assert.equal(sharedPaths.edges.length, 3);
+assert.equal(buildFlowGraph(analyze('SELECT 1 AS value')).nodes.length, 1);
+assert.equal(buildFlowGraph(fragment).nodes.some(node => node.kind === 'output'), false);
+const selfJoin = buildFlowGraph(analyze('SELECT a.id FROM t a LEFT JOIN t b ON a.id = b.id'));
+assert.equal(selfJoin.edges.length, 1);
+assert.equal(selfJoin.edges[0].label, '读取 · a / LEFT JOIN · b');
+console.log('SQL 解读器与可视化检查通过');
