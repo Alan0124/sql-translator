@@ -596,6 +596,11 @@ LIMIT 10;`;
               links.append(next);
             } else links.append(el('span', '', source.query ? `子查询：${source.query.main?.sources.join(' · ') || '内部查询'}` : source.name));
           });
+          (branch.subqueries || []).forEach(source => {
+            const next = el('button', '', `${source.label}：${source.query.main?.sources.join(' · ') || '内部查询'}`);
+            next.addEventListener('click', () => renderSelection(data, { type: 'cte', stage: source.query.main }, [...trail, { type: 'cte', stage: source.query.main }]));
+            links.append(next);
+          });
           if (!links.childElementCount) links.append(el('span', '', '仅使用常量或表达式'));
           group.append(links);
           panel.append(group);

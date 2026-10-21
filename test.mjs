@@ -267,4 +267,101 @@ assert.equal(buildFlowGraph(fragment).nodes.some(node => node.kind === 'output')
 const selfJoin = buildFlowGraph(analyze('SELECT a.id FROM t a LEFT JOIN t b ON a.id = b.id'));
 assert.equal(selfJoin.edges.length, 1);
 assert.equal(selfJoin.edges[0].label, '读取 · a / LEFT JOIN · b');
+// Regression: nested CTEs may shadow outer names without leaking to siblings.
+const shadowedSql = `WITH tmp AS (SELECT id FROM outer_src),
+a AS (WITH tmp AS (SELECT other_id AS id FROM inner_src) SELECT id FROM tmp),
+b AS (SELECT * FROM tmp) SELECT id FROM b`;
+const shadowed = analyze(shadowedSql);
+assert.deepEqual(traceColumn(shadowed, shadowed.main, shadowed.main.outputColumns[0]).paths.map(path => path.at(-1)), ['outer_src.id']);
+const sibling = shadowed.ctes.find(stage => stage.name === 'b');
+assert.deepEqual(sibling.outputColumns.map(column => column.name), ['id']);
+assert.equal(globalThis.resolveCte(shadowed, sibling, 'tmp'), shadowed.ctes[0]);
+const shadowedGraph = buildFlowGraph(shadowed);
+assert.ok(shadowedGraph.edges.some(edge => edge.from === shadowedGraph.nodes.find(node => node.stage === shadowed.ctes[0]).id
+  && edge.to === shadowedGraph.nodes.find(node => node.stage === sibling).id));
+assert.equal(locateSql(shadowedSql, shadowed, shadowedSql.lastIndexOf('FROM tmp') + 6).stage, shadowed.ctes[0]);
+const noLeak = analyze('WITH a AS (WITH tmp AS (SELECT id FROM inside_t) SELECT id FROM tmp) SELECT id FROM tmp');
+assert.deepEqual(noLeak.tables, ['inside_t', 'tmp']);
+assert.equal(traceColumn(noLeak, noLeak.main, noLeak.main.outputColumns[0]).paths[0].at(-1), 'tmp.id');
+const innerQuery = analyze('SELECT s.id FROM (WITH c AS (SELECT id FROM base_t) SELECT id FROM c) s');
+assert.deepEqual(innerQuery.tables, ['base_t']);
+assert.equal(traceColumn(innerQuery, innerQuery.main, innerQuery.main.outputColumns[0]).paths[0].at(-1), 'base_t.id');
+assert.deepEqual(buildFlowGraph(innerQuery).nodes.filter(node => node.kind === 'table').map(node => node.label), ['base_t']);
+
+// Aliases, quoted identifiers and window syntax must not become phantom columns.
+for (const alias of ['total', 'AS total', '"total value"', 'AS `total value`']) {
+  const priced = analyze(`SELECT price * qty ${alias} FROM sales`);
+  assert.equal(priced.main.outputColumns[0].expression, 'price * qty');
+  assert.deepEqual(traceColumn(priced, priced.main, priced.main.outputColumns[0]).paths.map(path => path.at(-1)), ['sales.price', 'sales.qty']);
+}
+for (const expression of ['price * qty', 'price + qty', 'CASE WHEN price > 0 THEN qty ELSE price END']) {
+  const unaliased = analyze(`SELECT ${expression} FROM sales`);
+  assert.equal(unaliased.main.outputColumns[0].expression, expression);
+}
+for (const expression of ['"user_id"', '`user_id`', 'e."user_id"', '"e"."user_id"']) {
+  const quotedSql = `SELECT ${expression} AS uid FROM events e`;
+  const quoted = analyze(quotedSql);
+  assert.equal(quoted.main.outputColumns[0].calculated, false);
+  assert.equal(traceColumn(quoted, quoted.main, quoted.main.outputColumns[0]).paths[0].at(-1), 'events.user_id');
+  const quotedHit = locateSql(quotedSql, quoted, quotedSql.indexOf('user_id') + 2);
+  assert.equal(traceColumn(quoted, quotedHit.stage, quotedHit.column).paths[0].at(-1), 'events.user_id');
+}
+const windowed = analyze(`SELECT ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) AS rn,
+SUM(amount) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) rolling FROM events`);
+assert.deepEqual(traceColumn(windowed, windowed.main, windowed.main.outputColumns[0]).paths.map(path => path.at(-1)), ['events.user_id', 'events.ts']);
+assert.deepEqual(traceColumn(windowed, windowed.main, windowed.main.outputColumns[1]).paths.map(path => path.at(-1)), ['events.amount', 'events.ts']);
+const keywordColumn = analyze('SELECT e."ORDER", e.desc FROM events e');
+assert.deepEqual(keywordColumn.main.outputColumns.map(column => traceColumn(keywordColumn, keywordColumn.main, column).paths[0].at(-1)), ['events.ORDER', 'events.desc']);
+const dottedQuoted = analyze('SELECT e."user.id" AS uid FROM "events" e');
+assert.equal(traceColumn(dottedQuoted, dottedQuoted.main, dottedQuoted.main.outputColumns[0]).paths[0].at(-1), '"events".user.id');
+const renamed = analyze('WITH c(x) AS (SELECT id FROM source_t) SELECT x FROM c');
+assert.equal(traceColumn(renamed, renamed.main, renamed.main.outputColumns[0]).paths[0].at(-1), 'source_t.id');
+const renamedWildcard = analyze('WITH a AS (SELECT id, val FROM source_t), c(x, y) AS (SELECT * FROM a) SELECT y FROM c');
+assert.equal(traceColumn(renamedWildcard, renamedWildcard.main, renamedWildcard.main.outputColumns[0]).paths[0].at(-1), 'source_t.val');
+const unknownWildcard = analyze('WITH c(x, y) AS (SELECT * FROM source_t) SELECT x FROM c');
+assert.match(traceColumn(unknownWildcard, unknownWildcard.main, unknownWildcard.main.outputColumns[0]).paths[0].at(-1), /上游字段未在这段 SQL 中列明/);
+assert.match(unknownWildcard.ctes[0].warnings.join(''), /对应关系需核对/);
+assert.throws(() => analyze('WITH c(x, y) AS (SELECT id FROM source_t) SELECT x FROM c'), /列名数量/);
+const outerJoins = analyze('SELECT a.id FROM a LEFT JOIN b ON a.id=b.id LEFT OUTER JOIN c ON b.id=c.id');
+assert.deepEqual(outerJoins.main.joins.map(join => join.condition), ['ON a.id=b.id', 'ON b.id=c.id']);
+
+// Predicate and scalar subqueries are dependencies, not extra FROM sources.
+for (const query of [
+  'SELECT a.id FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b.id = a.id)',
+  'SELECT a.id FROM a WHERE a.id IN (SELECT id FROM b)',
+  'SELECT a.id FROM a LEFT JOIN z ON EXISTS (SELECT 1 FROM b WHERE b.id = z.id)',
+  'SELECT a.id, (SELECT MAX(id) FROM b) AS max_id FROM a'
+]) {
+  const dependent = analyze(query);
+  assert.ok(dependent.tables.includes('b'));
+  const dependencyGraph = buildFlowGraph(dependent);
+  assert.ok(dependencyGraph.nodes.some(node => node.kind === 'table' && node.label === 'b'));
+  assert.ok(dependencyGraph.edges.some(edge => /依赖/.test(edge.label)));
+  assert.equal(traceColumn(dependent, dependent.main, dependent.main.outputColumns[0]).paths[0].at(-1), 'a.id');
+  assert.ok(dependencyGraph.edges.every(edge => layoutGraph(dependencyGraph).positions.get(edge.from).x < layoutGraph(dependencyGraph).positions.get(edge.to).x));
+}
+const scalarExpression = analyze('SELECT (SELECT MAX(id) FROM b) + a.id AS total FROM a');
+const scalarPaths = traceColumn(scalarExpression, scalarExpression.main, scalarExpression.main.outputColumns[0]).paths;
+assert.ok(scalarPaths.some(path => path.at(-1) === 'a.id'));
+assert.ok(scalarPaths.some(path => /子查询节点核对/.test(path.at(-1))));
+const nestedExists = analyze(`WITH tmp AS (SELECT id FROM outer_t) SELECT t.id FROM tmp t WHERE EXISTS (
+  WITH tmp AS (SELECT id FROM inner_t) SELECT id FROM tmp WHERE EXISTS (SELECT 1 FROM third_t)
+)`);
+assert.deepEqual(nestedExists.tables, ['outer_t', 'inner_t', 'third_t']);
+assert.equal(traceColumn(nestedExists, nestedExists.main, nestedExists.main.outputColumns[0]).paths[0].at(-1), 'outer_t.id');
+assert.deepEqual(new Set(buildFlowGraph(nestedExists).nodes.filter(node => node.kind === 'table').map(node => node.label)), new Set(nestedExists.tables));
+
+// Count expression reads instead of using a machine-dependent timing threshold.
+const sharedCtes = ['c0 AS (SELECT id FROM source_t)'];
+for (let i = 1; i <= 14; i++) sharedCtes.push(`c${i} AS (SELECT a.id + b.id AS id FROM c${i - 1} a JOIN c${i - 1} b ON a.id = b.id)`);
+const sharedLineage = analyze(`WITH ${sharedCtes.join(', ')} SELECT id FROM c14`);
+let expressionReads = 0;
+for (const stage of sharedLineage.ctes) {
+  const expression = stage.outputColumns[0].expression;
+  Object.defineProperty(stage.outputColumns[0], 'expression', { get() { expressionReads++; return expression; } });
+}
+const sharedTrace = traceColumn(sharedLineage, sharedLineage.main, sharedLineage.main.outputColumns[0]);
+assert.equal(sharedTrace.paths.length, 1);
+assert.equal(sharedTrace.paths[0].at(-1), 'source_t.id');
+assert.ok(expressionReads < 150, `Shared upstream expressions should be memoized, got ${expressionReads} reads`);
 console.log('SQL 解读器与可视化检查通过');

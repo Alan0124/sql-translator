@@ -20,24 +20,28 @@ function buildFlowGraph(data) {
     if (existing) existing.label += ` / ${label}`;
     else edges.push({ from: from.id, to: to.id, label });
   };
-  const wire = (stage, target, context = data, owner = stage) => {
+  const wire = (stage, target) => {
     if (stage.branches) {
       stage.branches.forEach((branch, i) => {
         const node = add('branch', `分支 ${i + 1}`, describe(branch), branch);
-        wire(branch, node, context, owner);
+        wire(branch, node);
         connect(node, target, i ? stage.setOps[i - 1] : '集合输入');
       });
       return;
     }
+    const queryNode = (query, label) => {
+      const node = add('cte', label, '内部查询', query.main);
+      query.ctes.forEach(cte => stages.set(cte, add('cte', cte.name, describe(cte), cte)));
+      query.ctes.forEach(cte => wire(cte, stages.get(cte)));
+      if (query.main) wire(query.main, node);
+      return node;
+    };
     stage.sourceDetails.forEach((source, i) => {
       let node;
       if (source.query) {
-        node = add('cte', `子查询${source.alias ? ` ${source.alias}` : ''}`, '内部查询', source.query.main);
-        source.query.ctes.forEach(cte => stages.set(cte, add('cte', cte.name, describe(cte), cte)));
-        source.query.ctes.forEach(cte => wire(cte, stages.get(cte), source.query));
-        if (source.query.main) wire(source.query.main, node, source.query);
+        node = queryNode(source.query, `子查询${source.alias ? ` ${source.alias}` : ''}`);
       } else {
-        const cte = resolveCte(context, owner, source.name) || (context !== data && resolveCte(data, owner, source.name));
+        const cte = resolveCte(data, stage, source.name);
         node = stages.get(cte);
         if (!node) {
           const key = source.name.toLowerCase();
@@ -48,6 +52,7 @@ function buildFlowGraph(data) {
       const join = i > 0 ? stage.joins[i - 1] : null;
       connect(node, target, join ? `${join.type} JOIN${source.alias ? ` · ${source.alias}` : ''}` : source.alias ? `读取 · ${source.alias}` : '读取');
     });
+    stage.subqueries.forEach((source, i) => connect(queryNode(source.query, `${source.label}子查询 ${i + 1}`), target, source.label));
   };
   [...data.ctes, ...(data.main ? [data.main] : [])].forEach(stage => wire(stage, stages.get(stage)));
   if (data.write && data.main) {
