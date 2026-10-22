@@ -10,6 +10,21 @@ function tokens(sql) {
     .map(match => ({ value: match[0], upper: match[0].toUpperCase(), start: match.index, end: match.index + match[0].length }));
 }
 
+function validateParentheses(ts) {
+  const stack = [];
+  for (const token of ts) {
+    if (token.value === '(') stack.push(token);
+    if (token.value !== ')') continue;
+    if (!stack.length) throw new Error(`第 ${token.start + 1} 个字符处有多余的右括号。`);
+    stack.pop();
+  }
+  if (stack.length) throw new Error(`第 ${stack.at(-1).start + 1} 个字符处的括号没有闭合。`);
+}
+
+function qualifiedIdentifier(name) {
+  return tokens(name).filter(token => token.value !== '.').map(token => identifier(token.value)).join('.').toLowerCase();
+}
+
 function closing(ts, open) {
   let depth = 0;
   for (let i = open; i < ts.length; i++) {
@@ -38,7 +53,7 @@ function tableAt(ts, index, sql, context) {
     const end = closing(ts, index);
     if (end < 0) throw new Error('来源子查询的括号没有闭合。');
     const after = ts[end + 1]?.upper === 'AS' ? end + 2 : end + 1;
-    const alias = ts[after] && WORD.test(ts[after].value) && !['WHERE', 'JOIN', 'LEFT', 'RIGHT', 'FULL', 'INNER', 'CROSS', 'ON', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT'].includes(ts[after].upper) ? ts[after].value : '';
+    const alias = ts[after] && isIdentifier(ts[after].value) && !['WHERE', 'JOIN', 'LEFT', 'RIGHT', 'FULL', 'INNER', 'CROSS', 'ON', 'GROUP', 'HAVING', 'QUALIFY', 'ORDER', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT'].includes(ts[after].upper) ? ts[after].value : '';
     return { name: '子查询', alias, next: alias ? after + 1 : end + 1, nested: true, query: parseQuery(sql.slice(ts[index].end, ts[end].start), context) };
   }
   let i = index;
@@ -49,7 +64,7 @@ function tableAt(ts, index, sql, context) {
     i += 2;
   }
   const aliasAt = ts[i]?.upper === 'AS' ? i + 1 : i;
-  const alias = ts[aliasAt] && WORD.test(ts[aliasAt].value) && !['WHERE', 'JOIN', 'LEFT', 'RIGHT', 'FULL', 'INNER', 'CROSS', 'ON', 'GROUP', 'HAVING', 'QUALIFY', 'ORDER', 'LIMIT', 'PARTITION', 'SELECT', 'LATERAL', 'UNION', 'INTERSECT', 'EXCEPT'].includes(ts[aliasAt].upper)
+  const alias = ts[aliasAt] && isIdentifier(ts[aliasAt].value) && !['WHERE', 'JOIN', 'LEFT', 'RIGHT', 'FULL', 'INNER', 'CROSS', 'ON', 'GROUP', 'HAVING', 'QUALIFY', 'ORDER', 'LIMIT', 'PARTITION', 'SELECT', 'LATERAL', 'UNION', 'INTERSECT', 'EXCEPT'].includes(ts[aliasAt].upper)
     ? ts[aliasAt].value : '';
   return { name, alias, next: alias ? aliasAt + 1 : i };
 }
@@ -84,9 +99,13 @@ function parseColumns(fields) {
     const partLevels = topLevel(part);
     const as = part.findLastIndex((t, i) => partLevels[i] === 0 && t.upper === 'AS');
     const last = part.at(-1), previous = part.at(-2);
+    const lastIsType = part.some((token, i) => isIdentifier(token.value)
+      && (part[i - 1]?.upper === 'AS' || part[i - 1]?.value === ':' && part[i - 2]?.value === ':')
+      && castTypeEnd(part, i) === part.length - 1);
     const implicit = as < 0 && part.length > 1 && partLevels.at(-1) === 0 && isIdentifier(last.value)
+      && !lastIsType
       && (!SQL_WORDS.has(last.upper) || !WORD.test(last.value)) && previous.end < last.start
-      && !/^[.\-+*/%=<>|&^]$/.test(previous.value)
+      && !/^[.:\-+*/%=<>|&^]$/.test(previous.value)
       && (!SQL_WORDS.has(previous.upper) || ['END', 'NULL', 'TRUE', 'FALSE'].includes(previous.upper));
     const expressionEnd = as >= 0 ? part[as].start : implicit ? last.start : last.end;
     const expression = fields.slice(part[0].start, expressionEnd).trim();
@@ -125,8 +144,11 @@ function parseSelect(sql, context) {
   const points = [from, where, group, having, qualify, order, limit].filter(i => i >= 0).sort((a, b) => a - b);
   const next = i => points.find(p => p > i) ?? ts.length;
   const section = (i, skip = 1) => i < 0 ? '' : clause(sql, ts, i + skip, next(i)).replace(/;\s*$/, '');
+  const modifier = ['DISTINCT', 'ALL'].includes(ts[select + 1]?.upper) ? ts[select + 1].upper : '';
+  const fieldStart = select + 1 + (modifier ? 1 : 0);
+  if (modifier === 'DISTINCT' && ts[fieldStart]?.upper === 'ON') throw new Error('暂不支持 DISTINCT ON，请使用普通 DISTINCT 或改写查询。');
   const result = {
-    fields: clause(sql, ts, select + 1, from >= 0 ? from : next(select)),
+    fields: clause(sql, ts, fieldStart, from >= 0 ? from : next(select)), distinct: modifier === 'DISTINCT',
     where: section(where), group: section(group, 2), having: section(having),
     qualify: section(qualify), order: section(order, 2), limit: section(limit),
     sources: [], joins: [], warnings: [], whereParts: [], sourceDetails: [], subqueries: []
@@ -136,6 +158,7 @@ function parseSelect(sql, context) {
   result.whereParts = splitPredicates(result.where);
   result.outputColumns = parseColumns(result.fields);
   result.metric = metricFor(result.fields, result.group, result.outputColumns);
+  if (result.distinct && !result.group && result.metric.kind === 'fields') result.metric.grain = '按输出字段去重';
   if (from >= 0) {
     const first = tableAt(ts, from + 1, sql, context);
     if (first.query) derived.add(from + 1);
@@ -208,6 +231,9 @@ function parseSetQuery(sql, context) {
   const levels = topLevel(ts);
   const positions = ts.flatMap((token, i) => levels[i] === 0 && ['UNION', 'INTERSECT', 'EXCEPT'].includes(token.upper) ? [i] : []);
   if (!positions.length) return parseSelect(sql, context);
+  // An unparenthesized tail belongs to the set expression as a whole.
+  const tail = ts.findIndex((token, i) => i > positions.at(-1) && levels[i] === 0 && ['ORDER', 'LIMIT'].includes(token.upper));
+  const bodyEnd = tail < 0 ? sql.length : ts[tail].start;
   const branches = [], setOps = [];
   let start = 0;
   for (const pos of positions) {
@@ -216,7 +242,11 @@ function parseSetQuery(sql, context) {
     setOps.push(ts[pos].upper + modifier);
     start = pos + (modifier ? 2 : 1);
   }
-  branches.push(parseSelect(sql.slice(ts[start].start).trim(), context));
+  branches.push(parseSelect(sql.slice(ts[start].start, bodyEnd).trim(), context));
+  const orderAt = tail < 0 ? -1 : ts.findIndex((token, i) => i >= tail && levels[i] === 0 && token.upper === 'ORDER');
+  const limitAt = tail < 0 ? -1 : ts.findIndex((token, i) => i >= tail && levels[i] === 0 && token.upper === 'LIMIT');
+  const order = orderAt < 0 ? '' : clause(sql, ts, orderAt + 2, limitAt > orderAt ? limitAt : ts.length).replace(/;\s*$/, '');
+  const limit = limitAt < 0 ? '' : clause(sql, ts, limitAt + 1, ts.length).replace(/;\s*$/, '');
   const first = branches[0];
   const warnings = branches.flatMap(branch => branch.warnings);
   if (branches.some(branch => branch.outputColumns.length !== first.outputColumns.length)) warnings.push('集合运算各分支输出字段数不一致，请核对 SQL。');
@@ -233,7 +263,7 @@ function parseSetQuery(sql, context) {
     branches, setOps, setTree, fields: first.fields, outputColumns: first.outputColumns.map(column => ({ ...column })),
     metric: { label: `输出 ${first.outputColumns.length} 个字段`, kind: 'fields', grain: '集合结果' },
     sources: branches.flatMap(branch => branch.sources), sourceDetails: branches.flatMap(branch => branch.sourceDetails),
-    joins: [], whereParts: [], where: '', group: '', having: '', qualify: '', order: '', limit: '', warnings
+    joins: [], whereParts: [], where: '', group: '', having: '', qualify: '', order, limit, warnings
   };
   queryContexts.set(result, new Map(context));
   return result;
@@ -308,6 +338,7 @@ function inputStatements(sql) {
     sql = sql.slice(0, first.start) + line[2].trimStart() + '\n' + sql.slice(first.start + line[0].length);
   }
   const ts = tokens(sql);
+  validateParentheses(ts);
   const levels = topLevel(ts);
   const statements = [];
   let start = 0;
@@ -359,10 +390,12 @@ function analyze(sql) {
       current.sourceDetails.forEach(source => { if (source.query) expandQuery(source.query); });
       current.subqueries.forEach(source => expandQuery(source.query));
       current.outputColumns = current.outputColumns.flatMap(column => {
-        const match = column.expression.match(/^(?:(\w+)\.)?\*$/);
-        if (!match) return [column];
-        const source = match[1]
-          ? current.sourceDetails.find(item => [item.alias, item.name, item.name.split('.').at(-1)].some(name => name?.toLowerCase() === match[1].toLowerCase()))
+        const parts = tokens(column.expression);
+        const qualifier = parts.length === 1 && parts[0].value === '*' ? ''
+          : parts.length === 3 && isIdentifier(parts[0].value) && parts[1].value === '.' && parts[2].value === '*' ? parts[0].value : null;
+        if (qualifier === null) return [column];
+        const source = qualifier
+          ? current.sourceDetails.find(item => [item.alias, item.name, item.name.split('.').at(-1)].some(name => name && qualifiedIdentifier(name) === qualifiedIdentifier(qualifier)))
           : current.sourceDetails.length === 1 ? current.sourceDetails[0] : null;
         const upstream = source?.query?.main || source && resolveCte(data, current, source.name);
         if (upstream) expand(upstream);
@@ -407,6 +440,21 @@ function resolveCte(data, owner, name) {
 
 const SQL_WORDS = new Set('AS CASE WHEN THEN ELSE END NULL TRUE FALSE DISTINCT ALL AND OR IS NOT IN LIKE BETWEEN CAST ARRAY STRING VARCHAR CHAR BOOLEAN INT INTEGER BIGINT DOUBLE DECIMAL DATE TIMESTAMP INTERVAL DAY DAYS MONTH YEAR HOUR MINUTE SECOND CURRENT_TIMESTAMP CURRENT_DATE CURRENT_TIME OVER PARTITION BY ORDER ASC DESC NULLS FIRST LAST ROWS RANGE GROUPS UNBOUNDED PRECEDING FOLLOWING CURRENT ROW FILTER WITHIN SELECT FROM WHERE EXISTS'.split(' '));
 
+function castTypeEnd(ts, start) {
+  let end = start;
+  while (ts[end + 1]?.value === '.' && isIdentifier(ts[end + 2]?.value)) end += 2;
+  if (ts[start].upper === 'DOUBLE' && ts[end + 1]?.upper === 'PRECISION') end++;
+  if (['CHARACTER', 'CHAR', 'BIT'].includes(ts[start].upper) && ts[end + 1]?.upper === 'VARYING') end++;
+  if (ts[end + 1]?.value === '(') {
+    const close = closing(ts, end + 1);
+    if (close >= 0) end = close;
+  }
+  if (['TIMESTAMP', 'TIME'].includes(ts[start].upper) && ['WITH', 'WITHOUT'].includes(ts[end + 1]?.upper)
+    && ts[end + 2]?.upper === 'TIME' && ts[end + 3]?.upper === 'ZONE') end += 3;
+  while (ts[end + 1]?.value === '[' && ts[end + 2]?.value === ']') end += 2;
+  return end;
+}
+
 function fieldReferences(expression) {
   const ts = tokens(expression);
   const refs = [];
@@ -416,6 +464,11 @@ function fieldReferences(expression) {
       const end = closing(ts, i);
       if (end < 0) break;
       i = end;
+      continue;
+    }
+    if (isIdentifier(token.value) && (ts[i - 1]?.upper === 'AS'
+      || ts[i - 1]?.value === ':' && ts[i - 2]?.value === ':')) {
+      i = castTypeEnd(ts, i);
       continue;
     }
     if (!isIdentifier(token.value) || ts[i + 1]?.value === '(') continue;
@@ -503,7 +556,7 @@ function traceColumn(data, stage, column) {
         continue;
       }
       let sources = current.sourceDetails;
-      if (qualifier) sources = sources.filter(source => [source.alias, source.name, source.name.split('.').at(-1)].some(name => name && name.split('.').map(identifier).join('.').toLowerCase() === qualifier.toLowerCase()));
+      if (qualifier) sources = sources.filter(source => [source.alias, source.name, source.name.split('.').at(-1)].some(name => name && qualifiedIdentifier(name) === qualifier.toLowerCase()));
       else if (sources.length > 1) sources = [];
       if (sources.length !== 1) {
         paths.push([...path, `${ref}：${sources.length ? '多个来源匹配' : '来源无法确定'}（需核对表结构或补充别名）`]);

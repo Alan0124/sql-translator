@@ -10,7 +10,7 @@ function buildFlowGraph(data) {
     stage.branches && stage.setOps.join(' / '),
     stage.joins.length && `${stage.joins.length} 次关联`,
     stage.whereParts.length && `${stage.whereParts.length} 个筛选`,
-    stage.group && '分组', stage.lateral && '展开',
+    stage.group && '分组', stage.distinct && '去重', stage.lateral && '展开',
     `${stage.outputColumns.length} 个字段`
   ].filter(Boolean).join(' · ');
   data.ctes.forEach(stage => stages.set(stage, add('cte', stage.name, `${stage.scope ? `${stage.scope} 内 · ` : ''}${describe(stage)}`, stage)));

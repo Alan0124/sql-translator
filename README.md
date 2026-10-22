@@ -105,11 +105,11 @@ python3 -m http.server 8765 --bind 127.0.0.1
 
 | SQL 结构 | 当前能力 |
 | --- | --- |
-| `SELECT`、`WITH` CTE | 按查询作用域识别读取来源、输出字段和 CTE 依赖，支持嵌套同名 CTE 与 CTE 列名列表 |
+| `SELECT`、`DISTINCT` / `ALL`、`WITH` CTE | 按查询作用域识别读取来源、输出字段和 CTE 依赖，保留去重语义，支持嵌套同名 CTE 与 CTE 列名列表 |
 | `JOIN`、`WHERE` | 拆解关联类型、条件和筛选条件 |
 | `GROUP BY`、`HAVING`、`QUALIFY`、`ORDER BY`、`LIMIT` | 展示分组、后续筛选、排序与限制 |
 | `CASE`、函数表达式 | 展示计算表达式，并追溯可识别的字段引用 |
-| `UNION`、`UNION ALL`、`INTERSECT`、`EXCEPT` | 展示集合分支；按字段位置分析来源与集合关系 |
+| `UNION`、`UNION ALL`、`INTERSECT`、`EXCEPT` | 展示集合分支；按字段位置分析来源与集合关系；末尾排序和行数限制归于整体结果 |
 | `INSERT OVERWRITE / INTO … SELECT` | 展示写入目标和分区声明 |
 | 前置 `ALTER TABLE … SET TBLPROPERTIES`、`%trino` / `%sql` | 展示脚本入口和表属性设置 |
 | 部分子查询与 `LATERAL VIEW` | 展示来源子查询、`EXISTS` / `IN` 等筛选子查询及表达式子查询的依赖，识别样例中的展开结构 |
@@ -120,6 +120,8 @@ python3 -m http.server 8765 --bind 127.0.0.1
 - 逗号连接、复杂方言或尚未覆盖的嵌套结构，可能无法完整拆解；请结合原 SQL 核对。
 - `SELECT *` 只有在上游字段可从 SQL 中推导时才能展开；不会读取真实表结构。
 - 支持省略 `AS` 的输出别名、双引号 / 反引号字段引用和常见窗口表达式；表达式子查询与跨层关联字段的完整血缘仍需结合子查询节点核对。
+- 双引号 / 反引号表别名可参与字段追溯及可推导的星号展开；常见 `CAST(... AS type)` 与 PostgreSQL `::type` 不将类型名误认成字段。这不代表已支持全部 PostgreSQL 语法。
+- 输入括号不完整时会报错；`DISTINCT ON` 暂不支持并明确提示，不会按普通 DISTINCT 解释。
 - 实际结果行数、字段类型、关联唯一性和数据质量，都需要另外查询数据库验证。
 - 识别到 SQL 结构，不代表数据库一定可以执行这段 SQL。
 

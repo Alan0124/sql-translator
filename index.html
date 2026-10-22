@@ -427,7 +427,7 @@ LIMIT 10;`;
       return box;
     }
     function renderProcessing(stage, number) {
-      if (!stage.group && !stage.having && !stage.qualify && !stage.order && !stage.limit) return null;
+      if (!stage.distinct && !stage.group && !stage.having && !stage.qualify && !stage.order && !stage.limit) return null;
       const box = el('div', 'step');
       const head = el('div', 'step-head');
       head.append(el('span', 'step-num', String(number).padStart(2, '0')), el('h3', '', '结果处理'));
@@ -436,7 +436,7 @@ LIMIT 10;`;
       const group = groupField ? `${groupField}（GROUP BY ${stage.group}）` : stage.group;
       const unique = stage.having.match(/^count\s*\(\s*distinct\s+([\w.]+)\s*\)\s*=\s*1$/i);
       const having = unique ? `每组恰好 1 个不同的 ${unique[1]}` : stage.having;
-      const parts = [stage.group && `分组：${group}`, stage.having && `组后筛选：${having}`, stage.qualify && `窗口筛选：${stage.qualify}`, stage.order && `排序：${stage.order}`, stage.limit && `最多 ${stage.limit} 行`].filter(Boolean);
+      const parts = [stage.group && `分组：${group}`, stage.having && `组后筛选：${having}`, stage.qualify && `窗口筛选：${stage.qualify}`, stage.distinct && '按输出字段去重', stage.order && `排序：${stage.order}`, stage.limit && `最多 ${stage.limit} 行`].filter(Boolean);
       const chips = el('div', 'chips');
       parts.forEach(part => chips.append(el('span', 'chip', part)));
       box.append(chips);
@@ -457,9 +457,11 @@ LIMIT 10;`;
         ? `目标：${data.write.target}${data.write.partition ? `；分区：${data.write.partition}` : ''}。最终 SELECT 提供 ${main.outputColumns.length} 个字段。`
         : !main
         ? `最后一个 CTE「${focus.name}」产出 ${focus.outputColumns.length} 个字段；后面还需要 SELECT 或 INSERT … SELECT 才是完整语句。`
+        : main.branches
+          ? `对 ${main.branches.length} 个查询分支进行集合运算（${main.setOps.join(' / ')}）${main.order ? `，整体排序：${main.order}` : ''}${main.limit ? `，最多 ${main.limit} 行` : ''}。`
         : main.metric.kind === 'distinct'
           ? `符合筛选和关联条件的 ${main.metric.field} 去重数量。`
-          : `从 ${main.sources[0] || '当前查询'} 读取，${main.group ? '按分组' : '逐行'}展示结果${main.limit ? `，最多 ${main.limit} 行` : ''}。`;
+          : `从 ${main.sources[0] || '当前查询'} 读取，${main.distinct ? '按输出字段去重后' : main.group ? '按分组' : '逐行'}展示结果${main.limit ? `，最多 ${main.limit} 行` : ''}。`;
       hero.append(el('p', '', summary));
       if (main && main.metric.kind !== 'fields') {
         const metric = el('button', '', '查看指标来源');

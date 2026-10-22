@@ -364,4 +364,59 @@ const sharedTrace = traceColumn(sharedLineage, sharedLineage.main, sharedLineage
 assert.equal(sharedTrace.paths.length, 1);
 assert.equal(sharedTrace.paths[0].at(-1), 'source_t.id');
 assert.ok(expressionReads < 150, `Shared upstream expressions should be memoized, got ${expressionReads} reads`);
+// SELECT modifiers must not become part of a CTE's output column name.
+for (const modifier of ['DISTINCT', 'ALL']) {
+  const modified = analyze(`WITH d AS (SELECT ${modifier} id FROM users) SELECT id FROM d`);
+  assert.equal(modified.ctes[0].outputColumns[0].name, 'id');
+  assert.equal(modified.ctes[0].distinct, modifier === 'DISTINCT');
+  assert.equal(traceColumn(modified, modified.main, modified.main.outputColumns[0]).paths[0].at(-1), 'users.id');
+}
+const distinctColumns = analyze('SELECT DISTINCT id, city FROM users ORDER BY city LIMIT 5');
+assert.deepEqual(distinctColumns.main.outputColumns.map(column => column.name), ['id', 'city']);
+assert.equal(distinctColumns.main.order, 'city');
+assert.throws(() => analyze('SELECT DISTINCT ON (id) id FROM users'), /DISTINCT ON/);
+
+// Quoted aliases work for both physical tables and derived sources, including keyword aliases.
+for (const alias of ['"a"', '`a`', '"a b"', '"a.b"', '"WHERE"']) {
+  for (const source of ['accounts', '(SELECT id FROM accounts)']) {
+    const quotedAlias = analyze(`SELECT ${alias}.id FROM ${source} AS ${alias}`);
+    assert.equal(traceColumn(quotedAlias, quotedAlias.main, quotedAlias.main.outputColumns[0]).paths[0].at(-1), 'accounts.id');
+  }
+}
+const quotedJoin = analyze('SELECT "b".id FROM accounts "a" LEFT JOIN payments "b" ON "a".id = "b".id');
+assert.equal(traceColumn(quotedJoin, quotedJoin.main, quotedJoin.main.outputColumns[0]).paths[0].at(-1), 'payments.id');
+const quotedWildcard = analyze('WITH d AS (SELECT id FROM accounts) SELECT "q".* FROM d "q"');
+assert.equal(quotedWildcard.main.outputColumns[0].name, 'id');
+assert.equal(traceColumn(quotedWildcard, quotedWildcard.main, quotedWildcard.main.outputColumns[0]).paths[0].at(-1), 'accounts.id');
+
+// The final ORDER BY/LIMIT applies to the combined result, not its last branch.
+const orderedUnion = analyze('SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id DESC LIMIT 10');
+assert.equal(orderedUnion.main.order, 'id DESC');
+assert.equal(orderedUnion.main.limit, '10');
+assert.ok(orderedUnion.main.branches.every(branch => !branch.order && !branch.limit));
+const windowUnion = analyze('SELECT ROW_NUMBER() OVER (ORDER BY ts) AS rn FROM a UNION SELECT id FROM b LIMIT 2');
+assert.equal(windowUnion.main.limit, '2');
+assert.equal(windowUnion.main.branches[0].order, '');
+assert.equal(traceColumn(windowUnion, windowUnion.main, windowUnion.main.outputColumns[0]).paths[0].at(-1), 'a.ts');
+
+// Type names, precision and array suffixes must not create fictional source fields.
+for (const expression of ['value::numeric', 'value::numeric(12, 2)', 'value::numeric[]',
+  'value::numeric::text', 'value::double precision', 'value::timestamp without time zone',
+  'value::"app"."money_type"', 'CAST(value AS numeric)', 'CAST(value AS "app"."money_type")']) {
+  const cast = analyze(`SELECT ${expression} AS amount FROM invoices`);
+  assert.deepEqual(traceColumn(cast, cast.main, cast.main.outputColumns[0]).paths.map(path => path.at(-1)), ['invoices.value']);
+}
+const castSum = analyze('SELECT value::numeric + fee::numeric AS amount FROM invoices');
+assert.deepEqual(traceColumn(castSum, castSum.main, castSum.main.outputColumns[0]).paths.map(path => path.at(-1)), ['invoices.value', 'invoices.fee']);
+for (const expression of ['value::double precision', 'value::timestamp without time zone']) {
+  const cast = analyze(`SELECT ${expression} FROM invoices`);
+  assert.equal(cast.main.outputColumns[0].expression, expression);
+}
+const realTypeNamedColumn = analyze('SELECT t.numeric FROM invoices t');
+assert.equal(traceColumn(realTypeNamedColumn, realTypeNamedColumn.main, realTypeNamedColumn.main.outputColumns[0]).paths[0].at(-1), 'invoices.numeric');
+
+for (const invalid of ['SELECT id FROM t WHERE x = (', 'SELECT id FROM t)', 'SELECT (id)) FROM t']) {
+  assert.throws(() => analyze(invalid), /括号/);
+}
+assert.equal(analyze("SELECT '(' AS label FROM t -- )\nWHERE id IN (1, 2)").main.outputColumns[0].name, 'label');
 console.log('SQL 解读器与可视化检查通过');
