@@ -12,13 +12,14 @@ function tokens(sql) {
 
 function validateParentheses(ts) {
   const stack = [];
+  const fail = (token, message) => { const error = new Error(message); error.sourceSpan = { start: token.start, end: token.end }; throw error; };
   for (const token of ts) {
     if (token.value === '(') stack.push(token);
     if (token.value !== ')') continue;
-    if (!stack.length) throw new Error(`第 ${token.start + 1} 个字符处有多余的右括号。`);
+    if (!stack.length) fail(token, `第 ${token.start + 1} 个字符处有多余的右括号。`);
     stack.pop();
   }
-  if (stack.length) throw new Error(`第 ${stack.at(-1).start + 1} 个字符处的括号没有闭合。`);
+  if (stack.length) fail(stack.at(-1), `第 ${stack.at(-1).start + 1} 个字符处的括号没有闭合。`);
 }
 
 function qualifiedIdentifier(name) {
@@ -48,13 +49,15 @@ function clause(sql, ts, start, end) {
   return start < 0 || start >= ts.length ? '' : sql.slice(ts[start].start, end < ts.length ? ts[end].start : sql.length).trim();
 }
 
-function tableAt(ts, index, sql, context) {
+function tableAt(ts, index, sql, context, offset = 0) {
   if (ts[index]?.value === '(') {
     const end = closing(ts, index);
     if (end < 0) throw new Error('来源子查询的括号没有闭合。');
     const after = ts[end + 1]?.upper === 'AS' ? end + 2 : end + 1;
     const alias = ts[after] && isIdentifier(ts[after].value) && !['WHERE', 'JOIN', 'LEFT', 'RIGHT', 'FULL', 'INNER', 'CROSS', 'ON', 'GROUP', 'HAVING', 'QUALIFY', 'ORDER', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT'].includes(ts[after].upper) ? ts[after].value : '';
-    return { name: '子查询', alias, next: alias ? after + 1 : end + 1, nested: true, query: parseQuery(sql.slice(ts[index].end, ts[end].start), context) };
+    return { name: '子查询', alias, next: alias ? after + 1 : end + 1, nested: true,
+      sourceSpan: { start: offset + ts[index].start, end: offset + ts[end].end },
+      query: parseQuery(sql.slice(ts[index].end, ts[end].start), context, offset + ts[index].end) };
   }
   let i = index;
   if (!ts[i] || !WORD.test(ts[i].value) && !/^["`]/.test(ts[i].value)) return { name: '未知来源', next: i + 1 };
@@ -66,7 +69,7 @@ function tableAt(ts, index, sql, context) {
   const aliasAt = ts[i]?.upper === 'AS' ? i + 1 : i;
   const alias = ts[aliasAt] && isIdentifier(ts[aliasAt].value) && !['WHERE', 'JOIN', 'LEFT', 'RIGHT', 'FULL', 'INNER', 'CROSS', 'ON', 'GROUP', 'HAVING', 'QUALIFY', 'ORDER', 'LIMIT', 'PARTITION', 'SELECT', 'LATERAL', 'UNION', 'INTERSECT', 'EXCEPT'].includes(ts[aliasAt].upper)
     ? ts[aliasAt].value : '';
-  return { name, alias, next: alias ? aliasAt + 1 : i };
+  return { name, alias, next: alias ? aliasAt + 1 : i, sourceSpan: { start: offset + ts[index].start, end: offset + ts[i - 1].end } };
 }
 
 function splitPredicates(sql) {
@@ -87,7 +90,7 @@ function splitPredicates(sql) {
   return parts.filter(Boolean).map(part => part.replace(/;\s*$/, ''));
 }
 
-function parseColumns(fields) {
+function parseColumns(fields, offset = 0) {
   const ts = tokens(fields);
   const levels = topLevel(ts);
   const starts = [0];
@@ -114,7 +117,8 @@ function parseColumns(fields) {
     const note = fields.slice(as >= 0 ? part[as + 1]?.end ?? following : part.at(-1).end, following).match(/--\s*([^\n]*)/)?.[1].trim();
     const expressionTokens = tokens(expression);
     const direct = expressionTokens.length % 2 === 1 && expressionTokens.every((token, i) => i % 2 ? token.value === '.' : isIdentifier(token.value));
-    return { name: identifier(name || expression), expression, note: note || '', calculated: !direct && expression !== '*' };
+    return { name: identifier(name || expression), expression, note: note || '', calculated: !direct && expression !== '*',
+      sourceSpan: { start: offset + part[0].start, end: offset + last.end } };
   }).filter(col => col.expression);
 }
 
@@ -126,7 +130,7 @@ function metricFor(fields, group, columns) {
   return { label, kind: 'fields', grain: group ? `按 ${group} 分组` : '逐行输出' };
 }
 
-function parseSelect(sql, context) {
+function parseSelect(sql, context, offset = 0) {
   const ts = tokens(sql);
   const levels = topLevel(ts);
   // ponytail: 只拆外层 SELECT；复杂方言或嵌套来源需要完整 SQL AST 解析器。
@@ -151,16 +155,17 @@ function parseSelect(sql, context) {
     fields: clause(sql, ts, fieldStart, from >= 0 ? from : next(select)), distinct: modifier === 'DISTINCT',
     where: section(where), group: section(group, 2), having: section(having),
     qualify: section(qualify), order: section(order, 2), limit: section(limit),
-    sources: [], joins: [], warnings: [], whereParts: [], sourceDetails: [], subqueries: []
+    sources: [], joins: [], warnings: [], whereParts: [], sourceDetails: [], subqueries: [],
+    sourceSpan: { start: offset + ts[0].start, end: offset + ts.at(-1).end }
   };
   queryContexts.set(result, new Map(context));
   const derived = new Set();
   result.whereParts = splitPredicates(result.where);
-  result.outputColumns = parseColumns(result.fields);
+  result.outputColumns = parseColumns(result.fields, offset + (ts[fieldStart]?.start ?? sql.length));
   result.metric = metricFor(result.fields, result.group, result.outputColumns);
   if (result.distinct && !result.group && result.metric.kind === 'fields') result.metric.grain = '按输出字段去重';
   if (from >= 0) {
-    const first = tableAt(ts, from + 1, sql, context);
+    const first = tableAt(ts, from + 1, sql, context, offset);
     if (first.query) derived.add(from + 1);
     result.sources.push(first.name);
     result.sourceDetails.push(first);
@@ -170,7 +175,7 @@ function parseSelect(sql, context) {
     }
     for (let i = from + 1; i < stop; i++) {
       if (levels[i] !== 0 || ts[i].upper !== 'JOIN') continue;
-      const source = tableAt(ts, i + 1, sql, context);
+      const source = tableAt(ts, i + 1, sql, context, offset);
       if (source.query) derived.add(i + 1);
       result.sources.push(source.name);
       result.sourceDetails.push(source);
@@ -210,7 +215,7 @@ function parseSelect(sql, context) {
     if (!derived.has(i)) {
       const section = points.filter(point => point < i).at(-1);
       const predicate = ['WHERE', 'HAVING', 'QUALIFY'].includes(ts[section]?.upper) || section === from;
-      result.subqueries.push({ query: parseQuery(sql.slice(ts[i].end, ts[end].start), context), label: predicate ? '筛选依赖' : '表达式依赖' });
+      result.subqueries.push({ query: parseQuery(sql.slice(ts[i].end, ts[end].start), context, offset + ts[i].end), label: predicate ? '筛选依赖' : '表达式依赖' });
     }
     i = end;
   }
@@ -226,23 +231,23 @@ function parseSelect(sql, context) {
   return result;
 }
 
-function parseSetQuery(sql, context) {
+function parseSetQuery(sql, context, offset = 0) {
   const ts = tokens(sql);
   const levels = topLevel(ts);
   const positions = ts.flatMap((token, i) => levels[i] === 0 && ['UNION', 'INTERSECT', 'EXCEPT'].includes(token.upper) ? [i] : []);
-  if (!positions.length) return parseSelect(sql, context);
+  if (!positions.length) return parseSelect(sql, context, offset);
   // An unparenthesized tail belongs to the set expression as a whole.
   const tail = ts.findIndex((token, i) => i > positions.at(-1) && levels[i] === 0 && ['ORDER', 'LIMIT'].includes(token.upper));
   const bodyEnd = tail < 0 ? sql.length : ts[tail].start;
   const branches = [], setOps = [];
   let start = 0;
   for (const pos of positions) {
-    branches.push(parseSelect(sql.slice(ts[start].start, ts[pos].start).trim(), context));
+    branches.push(parseSelect(sql.slice(ts[start].start, ts[pos].start), context, offset + ts[start].start));
     const modifier = ['ALL', 'DISTINCT'].includes(ts[pos + 1]?.upper) ? ` ${ts[pos + 1].upper}` : '';
     setOps.push(ts[pos].upper + modifier);
     start = pos + (modifier ? 2 : 1);
   }
-  branches.push(parseSelect(sql.slice(ts[start].start, bodyEnd).trim(), context));
+  branches.push(parseSelect(sql.slice(ts[start].start, bodyEnd), context, offset + ts[start].start));
   const orderAt = tail < 0 ? -1 : ts.findIndex((token, i) => i >= tail && levels[i] === 0 && token.upper === 'ORDER');
   const limitAt = tail < 0 ? -1 : ts.findIndex((token, i) => i >= tail && levels[i] === 0 && token.upper === 'LIMIT');
   const order = orderAt < 0 ? '' : clause(sql, ts, orderAt + 2, limitAt > orderAt ? limitAt : ts.length).replace(/;\s*$/, '');
@@ -263,13 +268,14 @@ function parseSetQuery(sql, context) {
     branches, setOps, setTree, fields: first.fields, outputColumns: first.outputColumns.map(column => ({ ...column })),
     metric: { label: `输出 ${first.outputColumns.length} 个字段`, kind: 'fields', grain: '集合结果' },
     sources: branches.flatMap(branch => branch.sources), sourceDetails: branches.flatMap(branch => branch.sourceDetails),
-    joins: [], whereParts: [], where: '', group: '', having: '', qualify: '', order, limit, warnings
+    joins: [], whereParts: [], where: '', group: '', having: '', qualify: '', order, limit, warnings,
+    sourceSpan: { start: offset + ts[0].start, end: offset + ts.at(-1).end }
   };
   queryContexts.set(result, new Map(context));
   return result;
 }
 
-function parseQuery(sql, outer = new Map()) {
+function parseQuery(sql, outer = new Map(), offset = 0) {
   const ts = tokens(sql);
   const ctes = [];
   const context = new Map(outer);
@@ -291,10 +297,11 @@ function parseQuery(sql, outer = new Map()) {
       if (ts[pos++]?.upper !== 'AS' || ts[pos]?.value !== '(') throw new Error(`CTE ${name} 的 AS (...) 结构无法识别。`);
       const end = closing(ts, pos);
       if (end < 0) throw new Error(`CTE ${name} 的括号没有闭合。`);
-      const inner = parseQuery(sql.slice(ts[pos].end, ts[end].start), context);
+      const inner = parseQuery(sql.slice(ts[pos].end, ts[end].start), context, offset + ts[pos].end);
       if (!inner.main || inner.write) throw new Error(`CTE ${name} 内还缺少 SELECT 查询。`);
       inner.ctes.forEach(stage => { stage.scope ||= name; });
-      const stage = Object.assign(inner.main, { name, columnAliases, sourceSql: sql.slice(nameStart, ts[end].end).trim() });
+      const stage = Object.assign(inner.main, { name, columnAliases, sourceSql: sql.slice(nameStart, ts[end].end).trim(),
+        definitionSpan: { start: offset + nameStart, end: offset + ts[end].end } });
       ctes.push(...inner.ctes, stage);
       context.set(name.toLowerCase(), stage);
       pos = end + 1;
@@ -309,7 +316,7 @@ function parseQuery(sql, outer = new Map()) {
     if (!['OVERWRITE', 'INTO'].includes(mode)) throw new Error('目前只支持 INSERT OVERWRITE / INTO ... SELECT 的静态解读。');
     let i = pos + 2;
     if (ts[i]?.upper === 'TABLE') i++;
-    const target = tableAt(ts, i, sql);
+    const target = tableAt(ts, i, sql, context, offset);
     if (target.name === '未知来源') throw new Error('写入目标表无法识别。');
     i = target.next;
     let partition = '';
@@ -322,9 +329,9 @@ function parseQuery(sql, outer = new Map()) {
     const levels = topLevel(ts);
     const select = ts.findIndex((t, j) => j >= i && levels[j] === 0 && t.upper === 'SELECT');
     if (select < 0) throw new Error('INSERT 后缺少 SELECT。');
-    main = parseSetQuery(sql.slice(ts[select].start), context);
-    write = { mode, target: target.name, partition };
-  } else if (!cteOnly) main = parseSetQuery(sql.slice(ts[pos]?.start ?? 0), context);
+    main = parseSetQuery(sql.slice(ts[select].start), context, offset + ts[select].start);
+    write = { mode, target: target.name, partition, sourceSpan: target.sourceSpan };
+  } else if (!cteOnly) main = parseSetQuery(sql.slice(ts[pos]?.start ?? 0), context, offset + (ts[pos]?.start ?? 0));
   return { ctes, main, write };
 }
 
@@ -335,22 +342,24 @@ function inputStatements(sql) {
     const line = sql.slice(first.start).match(/^%(trino|sql)\b([^\r\n]*)(?:\r?\n|$)/i);
     if (!line) throw new Error('目前只识别开头的 %trino 或 %sql。');
     magic = line[1].toLowerCase();
-    sql = sql.slice(0, first.start) + line[2].trimStart() + '\n' + sql.slice(first.start + line[0].length);
+    // Mask only the directive, preserving UTF-16 offsets, comments and line endings.
+    sql = sql.slice(0, first.start) + ' '.repeat(magic.length + 1) + sql.slice(first.start + magic.length + 1);
   }
   const ts = tokens(sql);
   validateParentheses(ts);
   const levels = topLevel(ts);
   const statements = [];
+  const statementOffsets = [];
   let start = 0;
   ts.forEach((token, i) => {
     if (levels[i] !== 0 || token.value !== ';') return;
     const part = sql.slice(start, token.start).trim();
-    if (tokens(part).length) statements.push(part);
+    if (tokens(part).length) { statements.push(part); statementOffsets.push(start + sql.slice(start, token.start).search(/\S/)); }
     start = token.end;
   });
   const last = sql.slice(start).trim();
-  if (tokens(last).length) statements.push(last);
-  return { magic, statements };
+  if (tokens(last).length) { statements.push(last); statementOffsets.push(start + sql.slice(start).search(/\S/)); }
+  return { magic, statements, statementOffsets };
 }
 
 function parseSetup(sql) {
@@ -367,12 +376,12 @@ function parseSetup(sql) {
 
 function analyze(sql) {
   if (!sql.trim()) throw new Error('先粘贴一段 SQL。');
-  const { magic, statements } = inputStatements(sql);
+  const { magic, statements, statementOffsets } = inputStatements(sql);
   if (!statements.length) throw new Error('先粘贴一段 SQL。');
   const setup = statements.slice(0, -1).map(parseSetup);
   const query = statements.at(-1);
   if (tokens(query)[0]?.upper === 'ALTER') throw new Error('ALTER TABLE 后还需要一条 SELECT 或 WITH ... INSERT 查询。');
-  const { ctes, main, write } = parseQuery(query);
+  const { ctes, main, write } = parseQuery(query, new Map(), statementOffsets.at(-1));
   const data = { ctes, main };
   const all = [...ctes, ...(main ? [main] : [])];
   const expanded = new WeakSet();
@@ -400,13 +409,13 @@ function analyze(sql) {
         const upstream = source?.query?.main || source && resolveCte(data, current, source.name);
         if (upstream) expand(upstream);
         return upstream?.outputColumns.length && upstream.outputColumns.every(item => item.name !== '*') ? upstream.outputColumns.map(item => ({
-          name: item.name, expression: `${source.alias || source.name}."${item.name.replaceAll('"', '""')}"`, note: '', calculated: false
+          name: item.name, expression: `${source.alias || source.name}."${item.name.replaceAll('"', '""')}"`, note: '', calculated: false, sourceSpan: column.sourceSpan
         })) : [column];
       });
     }
     if (current.columnAliases) {
       if (current.outputColumns.some(column => column.name === '*')) {
-        current.outputColumns = current.columnAliases.map(name => ({ name, expression: '*', note: '', calculated: false }));
+        current.outputColumns = current.columnAliases.map(name => ({ name, expression: '*', note: '', calculated: false, sourceSpan: current.outputColumns[0]?.sourceSpan }));
         current.warnings.push(`CTE ${current.name} 的列名已识别，但 SELECT * 的原始字段对应关系需核对表结构。`);
       } else {
         if (current.columnAliases.length !== current.outputColumns.length) throw new Error(`CTE ${current.name} 的列名数量与输出字段不一致。`);
@@ -431,7 +440,7 @@ function analyze(sql) {
     stage.subqueries.forEach(source => collectQuery(source.query));
   };
   all.forEach(collect);
-  return { ctes, main, write, magic, setup, tables: [...tables], hasFinalQuery: !!main };
+  return { ctes, main, write, magic, setup, tables: [...tables], hasFinalQuery: !!main, sql };
 }
 
 function resolveCte(data, owner, name) {
@@ -490,49 +499,55 @@ function fieldReferences(expression) {
 }
 
 function traceColumn(data, stage, column) {
-  const paths = [];
+  const traces = [];
   const cache = new WeakMap();
-  const visit = (current, selected, path, seen) => {
+  const step = (label, stage, column, sourceSpan = column?.sourceSpan || stage?.definitionSpan || stage?.sourceSpan) => ({ label, stage, column, sourceSpan });
+  const emit = (steps, status, reason) => traces.push({ steps, status, reason });
+  const visit = (current, selected, steps, seen) => {
     if (!cache.has(current)) cache.set(current, new Map());
     const columns = cache.get(current);
     const key = JSON.stringify([selected.name, selected.expression]);
     if (!columns.has(key)) {
-      const start = paths.length;
-      walk(current, selected, path, seen);
-      // Cache relative paths, so shared upstream work is independent of its caller.
-      const unique = new Map(paths.splice(start).map(result => {
-        const suffix = result.slice(path.length);
-        return [JSON.stringify(suffix), suffix];
+      const start = traces.length;
+      walk(current, selected, steps, seen);
+      // Cache relative steps, retaining exact objects and source positions.
+      const unique = new Map(traces.splice(start).map(result => {
+        const suffix = result.steps.slice(steps.length);
+        return [JSON.stringify([suffix.map(item => [item.label, item.sourceSpan]), result.status, result.reason]), { ...result, steps: suffix }];
       }));
       columns.set(key, [...unique.values()]);
     }
-    for (const suffix of columns.get(key)) paths.push([...path, ...suffix]);
+    for (const result of columns.get(key)) traces.push({ ...result, steps: [...steps, ...result.steps] });
   };
-  const walk = (current, selected, path, seen) => {
+  const walk = (current, selected, steps, seen) => {
+    const end = (label, status, reason) => emit([...steps, step(label, current, selected)], status, reason);
     if (current.branches) {
-      const index = current.outputColumns.findIndex(item => item.name.toLowerCase() === selected.name.toLowerCase());
+      if (current.branches.some(branch => branch.outputColumns.length !== current.outputColumns.length)) {
+        end('集合分支输出字段数不一致', 'unknown', '集合结构不完整，需先核对各分支的字段数量和位置。');
+        return;
+      }
+      const index = current.outputColumns.indexOf(selected) >= 0 ? current.outputColumns.indexOf(selected)
+        : current.outputColumns.findIndex(item => item.name.toLowerCase() === selected.name.toLowerCase());
       const valueBranches = node => node.index !== undefined ? [node.index]
         : node.op.startsWith('UNION') ? [...valueBranches(node.left), ...valueBranches(node.right)] : valueBranches(node.left);
       valueBranches(current.setTree).forEach(i => {
-        const branch = current.branches[i];
-        const next = branch.outputColumns[index];
+        const branch = current.branches[i], next = branch.outputColumns[index];
         const label = `分支 ${i + 1}${i ? `（${current.setOps[i - 1]}）` : ''}`;
-        if (next) visit(branch, next, [...path, `${label}.${next.name}`], seen);
-        else paths.push([...path, `${label}：缺少对应位置的输出字段`]);
+        if (next) visit(branch, next, [...steps, step(`${label}.${next.name}`, branch, next)], seen);
+        else end(`${label}：缺少对应位置的输出字段`, 'unknown', '集合分支缺少对应字段。');
       });
       return;
     }
     const refs = fieldReferences(selected.expression);
     const expressionTokens = tokens(selected.expression);
     const hasSubquery = expressionTokens.some((token, i) => token.value === '(' && ['SELECT', 'WITH'].includes(expressionTokens[i + 1]?.upper));
-    if (hasSubquery) paths.push([...path, '子查询表达式：字段来源需在子查询节点核对']);
+    if (hasSubquery) end('子查询表达式：字段来源需在子查询节点核对', 'unknown', '表达式子查询的字段映射尚未完整解析，请查看子查询节点。');
     if (!refs.length) {
       if (hasSubquery) return;
       const expression = selected.expression;
-      const label = expression === '*' ? 'SELECT *：上游字段未在这段 SQL 中列明'
-        : /^('(?:''|[^'])*'|\d+(?:\.\d+)?|NULL|TRUE|FALSE)$/i.test(expression) ? `常量：${expression}`
-        : `基于来源记录的计算：${expression}`;
-      paths.push([...path, label]);
+      if (expression === '*' || /\.\*$/.test(expression)) end('SELECT *：上游字段未在这段 SQL 中列明', 'unknown', '缺少表结构，无法展开星号或确定原始字段。');
+      else if (/^('(?:''|[^'])*'|\d+(?:\.\d+)?|NULL|TRUE|FALSE)$/i.test(expression)) end(`常量：${expression}`, 'resolved', 'SQL 明确给出常量，不依赖来源字段。');
+      else end(`基于来源记录的计算：${expression}`, 'approximate', '已识别表达式，但不能仅凭 SQL 确认其完整字段依赖。');
       return;
     }
     for (const ref of refs) {
@@ -544,49 +559,63 @@ function traceColumn(data, stage, column) {
       const lateralIndex = qualifier ? -1 : current.lateral?.columns.findIndex(name => name.toLowerCase() === field.toLowerCase()) ?? -1;
       if (lateralIndex >= 0) {
         const label = `LATERAL VIEW ${field}（Map ${lateralIndex === 0 ? '键' : '值'}）`;
-        if (lateralIndex === 0 || !current.lateral.mapField) {
-          paths.push([...path, label]);
-          continue;
-        }
         const source = current.sourceDetails[0];
         const upstream = source?.query?.main || source && resolveCte(data, current, source.name);
-        const next = upstream?.outputColumns.find(item => item.name.toLowerCase() === current.lateral.mapField.toLowerCase());
-        if (next) visit(upstream, next, [...path, label, `${source.query ? '子查询' : `CTE ${upstream.name}`}.${next.name}`], seen);
-        else paths.push([...path, `${label}（上游 Map 字段未找到）`]);
+        const next = upstream?.outputColumns.find(item => item.name.toLowerCase() === current.lateral.mapField?.toLowerCase());
+        if (lateralIndex === 1 && next && !seen.has(next)) {
+          const start = traces.length;
+          visit(upstream, next, [...steps, step(label, current, selected), step(`${source.query ? '子查询' : `CTE ${upstream.name}`}.${next.name}`, upstream, next)], new Set([...seen, next]));
+          traces.slice(start).forEach(trace => {
+            if (trace.status !== 'unknown') trace.status = 'approximate';
+            trace.reason += ' LATERAL VIEW 按已识别的 Map 表达式推定，仍需核对展开规则。';
+          });
+        } else end(label, 'unknown', '展开字段的完整映射需要核对上游表达式和表结构。');
         continue;
       }
       let sources = current.sourceDetails;
       if (qualifier) sources = sources.filter(source => [source.alias, source.name, source.name.split('.').at(-1)].some(name => name && qualifiedIdentifier(name) === qualifier.toLowerCase()));
       else if (sources.length > 1) sources = [];
-      if (sources.length !== 1) {
-        paths.push([...path, `${ref}：${sources.length ? '多个来源匹配' : '来源无法确定'}（需核对表结构或补充别名）`]);
+      if (sources.length !== 1 || current.warnings.some(message => message.startsWith('FROM 中的逗号连接'))) {
+        end(`${ref}：${sources.length > 1 ? '多个来源匹配' : '来源无法确定'}（需核对表结构或补充别名）`, 'unknown', '来源有歧义、别名不匹配或 FROM 尚未完整拆解，不能绑定到任意源表。');
         continue;
       }
       const source = sources[0];
-      if (source.query?.main) {
-        const next = source.query.main.outputColumns.find(item => item.name.toLowerCase() === field.toLowerCase());
-        const label = `子查询${source.alias ? ` ${source.alias}` : ''}.${field}`;
-        if (next) visit(source.query.main, next, [...path, label], seen);
-        else paths.push([...path, `${label}（未找到字段定义）`]);
+      const upstream = source.query?.main || resolveCte(data, current, source.name);
+      if (!upstream) {
+        if (source.name === '未知来源' || source.name === '子查询') end(`${ref}：来源无法确定`, 'unknown', '未解析出有效来源。');
+        else emit([...steps, step(`${source.name}.${field}${suffix}`, null, null, selected.sourceSpan || source.sourceSpan)], qualifier ? 'resolved' : 'approximate',
+          qualifier ? 'SQL 明确限定来源；未连接数据库核验字段存在性。' : '按唯一 FROM 来源推定；缺少表结构，字段归属仍需核对。');
         continue;
       }
-      const cte = resolveCte(data, current, source.name);
-      if (!cte) {
-        paths.push([...path, `${source.name}.${field}${suffix}`]);
-        continue;
-      }
-      const next = cte.outputColumns.find(item => item.name.toLowerCase() === field.toLowerCase());
-      const label = `CTE ${cte.name}${cte.scope ? `（${cte.scope} 内）` : ''}.${field}`;
-      const key = next;
-      if (!next || seen.has(key)) paths.push([...path, `${label}（${next ? '循环引用' : '未找到字段定义'}）`]);
-      else visit(cte, next, [...path, label], new Set([...seen, key]));
+      const matches = upstream.outputColumns.filter(item => item.name.toLowerCase() === field.toLowerCase());
+      const next = matches.length === 1 ? matches[0] : null;
+      const label = `${source.query ? `子查询${source.alias ? ` ${source.alias}` : ''}` : `CTE ${upstream.name}${upstream.scope ? `（${upstream.scope} 内）` : ''}`}.${field}`;
+      if (!next || seen.has(next)) end(`${label}（${next ? '循环引用' : '未找到字段定义'}）`, 'unknown', matches.length > 1 ? '上游存在同名输出字段，不能任取一个。' : '上游字段缺失或存在循环，无法确认来源。');
+      else visit(upstream, next, [...steps, step(label, upstream, next)], new Set([...seen, next]));
     }
   };
-  visit(stage, column, [`${stage.name ? `CTE ${stage.name}` : '最终输出'}.${column.name}`], new Set());
+  visit(stage, column, [step(`${stage.name ? `CTE ${stage.name}` : '最终输出'}.${column.name}`, stage, column)], new Set());
+  const status = traces.some(item => item.status === 'unknown') ? 'unknown' : traces.some(item => item.status === 'approximate') ? 'approximate' : 'resolved';
   const expression = stage.branches
-    ? stage.branches.map((branch, i) => `分支 ${i + 1}：${branch.outputColumns[stage.outputColumns.findIndex(item => item.name === column.name)]?.expression || '未找到字段'}`).join('\n')
+    ? stage.branches.map((branch, i) => `分支 ${i + 1}：${branch.outputColumns[stage.outputColumns.indexOf(column)]?.expression || '未找到字段'}`).join('\n')
     : column.expression;
-  return { expression, paths };
+  return { expression, paths: traces.map(item => item.steps.map(step => step.label)), traces, status, reasons: [...new Set(traces.map(item => item.reason))] };
+}
+
+function queryStages(data) {
+  const stages = new Set();
+  const query = value => { value.ctes.forEach(visit); if (value.main) visit(value.main); };
+  const visit = stage => {
+    if (stages.has(stage)) return;
+    stages.add(stage);
+    if (stage.branches) stage.branches.forEach(visit);
+    else {
+      stage.sourceDetails.forEach(source => { if (source.query) query(source.query); });
+      stage.subqueries.forEach(source => query(source.query));
+    }
+  };
+  query(data);
+  return [...stages];
 }
 
 function locateSql(sql, data, offset) {
@@ -598,33 +627,23 @@ function locateSql(sql, data, offset) {
   const name = identifier(token.value);
   const qualified = ts[index - 1]?.value === '.' || ts[index + 1]?.value === '.';
   const reserved = SQL_WORDS.has(token.upper) || ['SELECT', 'FROM', 'JOIN', 'WHERE', 'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'WITH', 'INSERT', 'OVERWRITE', 'INTO'].includes(token.upper);
-  if (WORD.test(token.value) && !qualified && reserved || ts[index + 1]?.value === '(') return null;
-  const used = new Map();
-  const spans = data.ctes.map(stage => {
-    const start = sql.indexOf(stage.sourceSql, used.get(stage.sourceSql) || 0);
-    used.set(stage.sourceSql, start + 1);
-    return { stage, start, size: stage.sourceSql.length };
-  }).filter(item => item.start >= 0);
-  const current = spans.filter(item => item.start <= token.start && token.start < item.start + item.size)
-    .sort((a, b) => a.size - b.size)[0]?.stage || data.main || data.ctes.at(-1);
-  const definition = spans.find(item => item.start === token.start && item.stage.name.toLowerCase() === name.toLowerCase());
-  const cte = definition?.stage || ['FROM', 'JOIN'].includes(ts[index - 1]?.upper) && current && resolveCte(data, current, name);
-  if (cte) return { type: 'cte', stage: cte };
+  if (WORD.test(token.value) && !qualified && reserved) return null;
+  if (sql !== data.sql) return null;
+  const stages = queryStages(data);
+  const current = stages.filter(stage => stage.sourceSpan.start <= token.start && token.start < stage.sourceSpan.end)
+    .sort((a, b) => a.sourceSpan.end - a.sourceSpan.start - (b.sourceSpan.end - b.sourceSpan.start))[0];
+  const definition = stages.find(stage => stage.definitionSpan?.start === token.start && stage.name.toLowerCase() === name.toLowerCase());
+  const cte = definition || ['FROM', 'JOIN'].includes(ts[index - 1]?.upper) && current && resolveCte(data, current, name);
+  if (cte) return { type: 'cte', stage: cte, sourceSpan: cte.definitionSpan };
+  if (ts[index + 1]?.value === '(') return null;
   let chain = index;
   while (ts[chain - 1]?.value === '.' && isIdentifier(ts[chain - 2]?.value)) chain -= 2;
   if (['FROM', 'JOIN', 'TABLE'].includes(ts[chain - 1]?.upper) || ts[index + 1]?.value === '.') return null;
   if (!current) return null;
   const qualifier = ts[index - 1]?.value === '.' && isIdentifier(ts[index - 2]?.value) ? ts[index - 2].value : '';
-  let column = !qualifier && current.outputColumns.find(item => item.name.toLowerCase() === name.toLowerCase());
-  if (!column && current.branches) {
-    const positions = new Set();
-    current.branches.forEach(branch => branch.outputColumns.forEach((item, i) => {
-      if (fieldReferences(item.expression).some(ref => identifier(tokens(ref).at(-1).value).toLowerCase() === name.toLowerCase())) positions.add(i);
-    }));
-    if (positions.size === 1) column = current.outputColumns[[...positions][0]];
-  }
-  column ||= { name, expression: qualifier ? `${qualifier}.${token.value}` : token.value };
-  return { type: 'field', stage: current, column };
+  const column = current.outputColumns.find(item => item.sourceSpan?.start <= token.start && token.start < item.sourceSpan.end)
+    || { name, expression: qualifier ? `${qualifier}.${token.value}` : token.value, sourceSpan: { start: ts[chain].start, end: token.end } };
+  return { type: 'field', stage: current, column, sourceSpan: column.sourceSpan };
 }
 
 globalThis.analyze = analyze;

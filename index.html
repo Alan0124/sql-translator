@@ -134,7 +134,7 @@
     .legend .output::before { background: #245e50; }
     .legend .branch::before { background: #b79b67; }
     .graph-shell { position: relative; border: 1px solid #dfe9e5; border-radius: 12px; overflow: hidden; background: #f8fbfa; }
-    .graph-controls { display: flex; align-items: center; justify-content: flex-end; gap: 5px; padding: 7px 10px; border-bottom: 1px solid #e7eeeb; background: #fff; }
+    .graph-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 5px; padding: 7px 10px; border-bottom: 1px solid #e7eeeb; background: #fff; }
     .graph-controls button { padding: 4px 9px; border-radius: 5px; font-size: 11px; }
     .graph-controls span { font-size: 10px; min-width: 37px; text-align: right; color: #8b9b94; }
     .graph-dialog { width: calc(100vw - 48px); max-width: 1800px; height: calc(100vh - 64px); max-height: none; padding: 0; border: 1px solid #cbded3; border-radius: 14px; box-shadow: 0 24px 80px #0e302944; }
@@ -182,6 +182,13 @@
     .empty p { font-size: 12px; line-height: 1.8; margin: 0; }
     @media (max-width: 1000px) { main { grid-template-columns: minmax(300px, .8fr) minmax(0, 1fr); gap: 15px; padding: 0 16px 32px; } .card { padding: 16px; } .stat { padding: 10px 8px; } }
     @media (max-width: 760px) { header { padding: 18px; } header p { max-width: 240px; } .local-badge { display: none; } main { grid-template-columns: 1fr; } .input-card { position: static; } .editor { height: 300px; } .stats { gap: 6px; } .graph-viewport { max-height: 350px; } .visual-heading span { display: none; } }
+    .source-status { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #e5f3ec; color: #245e50; }
+    .source-status.approximate { background: #fff2d6; color: #805d16; }
+    .source-status.unknown { background: #fae9e7; color: #9a443a; }
+    .field .source-status { margin-top: 5px; }
+    .source-location { min-height: 18px; margin: 8px 0; font-size: 12px; color: #6c8076; }
+    .lineage-head { flex-wrap: wrap; }
+    .trace-reason { margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -193,6 +200,7 @@
     <section class="card input-card" aria-label="SQL 输入">
       <h2>你的 SQL</h2>
       <p class="intro">粘贴查询或脚本，查看数据流、字段来源和关联逻辑。支持 CTE、JOIN、集合运算与 INSERT … SELECT。</p>
+      <p id="source-location" class="source-location" role="status" aria-live="polite"></p>
       <div id="find-bar" class="find-bar" role="search" aria-label="在 SQL 中查找" hidden>
         <input id="find-input" type="search" aria-label="查找 SQL 文本" placeholder="查找 SQL 文本">
         <span id="find-count" aria-live="polite">0 / 0</span>
@@ -267,7 +275,7 @@ LIMIT 10;`;
     const findBar = document.getElementById('find-bar');
     const findInput = document.getElementById('find-input');
     const findCount = document.getElementById('find-count');
-    let selectedWord = '', findMatches = [], findIndex = -1;
+    let selectedWord = '', selectedRange = null, findMatches = [], findIndex = -1;
     const wordRanges = sql => [...sql.matchAll(/[\p{L}_][\p{L}\p{N}_$]*/gu)]
       .map(match => ({ value: match[0], start: match.index, end: match.index + match[0].length }));
     let activeData, activeSql = '';
@@ -277,6 +285,38 @@ LIMIT 10;`;
       if (value !== undefined) node.textContent = value;
       return node;
     };
+    function selectSqlSpan(data, span) {
+      const notice = document.getElementById('source-location');
+      if (data.sql !== input.value) { notice.textContent = 'SQL 已修改，请重新生成数据地图后再定位。'; return; }
+      if (!span) return;
+      if (!findBar.hidden) closeFind(false);
+      selectedRange = span;
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(span.start, span.end);
+      showHighlights();
+      const mark = highlights.querySelector('mark');
+      if (mark) {
+        const bounds = mark.getClientRects()[0], editor = input.getBoundingClientRect();
+        input.scrollTop += bounds.top - editor.top - editor.height / 3;
+        input.scrollLeft += bounds.left - editor.left - 24;
+        syncHighlights();
+      }
+      const prefix = data.sql.slice(0, span.start).split('\n');
+      notice.textContent = `已定位原 SQL：第 ${prefix.length} 行，第 ${prefix.at(-1).length + 1} 列（选中 ${span.end - span.start} 个字符）。`;
+    }
+    function sourceButton(data, span, label = '定位原 SQL') {
+      const button = el('button', '', label);
+      button.disabled = !span;
+      button.addEventListener('click', () => selectSqlSpan(data, span));
+      return button;
+    }
+    function showError(error) {
+      activeSql = '';
+      output.className = '';
+      const message = el('p', 'error', error.message);
+      output.replaceChildren(message);
+      if (error.sourceSpan) output.append(sourceButton({ sql: input.value }, error.sourceSpan, '定位错误位置'));
+    }
     function shortCondition(raw) {
       const names = {
         activity_time: '活动时间', activity_type: '活动类型', call_duration: '通话时长',
@@ -379,6 +419,8 @@ LIMIT 10;`;
       stage.outputColumns.forEach(column => {
         const field = el('button', `field${column.calculated ? ' calculated' : ''}`, column.name);
         field.addEventListener('click', () => renderSelection(data, { type: 'field', stage, column }));
+        const status = traceColumn(data, stage, column).status;
+        field.append(el('small', `source-status ${status}`, `来源${lineageLabels[status]}`));
         if (column.note || column.calculated) field.append(el('small', '', column.note || '计算字段'));
         fields.append(field);
       });
@@ -483,6 +525,7 @@ LIMIT 10;`;
       const legend = el('div', 'legend');
       [['table', '源表'], ['cte', 'CTE / 子查询'], ['branch', '集合分支'], ['output', '输出 / 写入']].forEach(([kind, label]) => legend.append(el('span', kind, label)));
       output.append(heading, legend, renderGraph(graph, node => {
+        selectedRange = null;
         selectedWord = node.stage?.name || (node.kind === 'table' ? node.label.split('.').at(-1) : '');
         showHighlights();
         if (node.stage) renderSelection(data, { type: 'cte', stage: node.stage });
@@ -550,10 +593,13 @@ LIMIT 10;`;
         links.append(button);
       });
       if (node.kind === 'target') panel.append(el('p', 'note', `${data.write.mode === 'OVERWRITE' ? '覆盖写入' : '追加写入'}${data.write.partition ? ` · 分区 ${data.write.partition}` : ''}`));
-      panel.append(links, el('p', 'small', '表名来自 SQL；未读取表结构或执行查询。'));
+      const locations = el('div', 'upstream-links');
+      (node.sourceSpans || []).forEach((span, i) => locations.append(sourceButton(data, span, `定位原 SQL · 引用 ${i + 1}`)));
+      panel.append(links, locations, el('p', 'small', '表名来自 SQL；未读取表结构或执行查询。'));
       showInspector(panel);
     }
     function renderSelection(data, hit, trail = [hit]) {
+      selectedRange = null;
       const panel = el('section', 'selection');
       const head = el('div', 'lineage-head');
       head.append(el('h2', '', hit.type === 'cte' ? hit.stage.name ? `CTE · ${hit.stage.name}${hit.stage.scope ? `（${hit.stage.scope} 内）` : ''}` : '查询节点' : `字段 · ${hit.column.name}`));
@@ -563,7 +609,7 @@ LIMIT 10;`;
         output.querySelectorAll('.dimmed, .selected').forEach(node => node.classList.remove('dimmed', 'selected'));
         output.querySelectorAll('[aria-pressed]').forEach(node => node.setAttribute('aria-pressed', 'false'));
       });
-      head.append(close);
+      head.append(sourceButton(data, hit.column?.sourceSpan || hit.stage.definitionSpan || hit.stage.sourceSpan), close);
       panel.append(head);
       if (trail.length > 1) {
         const crumbs = el('div', 'selection-crumbs');
@@ -620,54 +666,31 @@ LIMIT 10;`;
         }
       } else {
         const traced = traceColumn(data, hit.stage, hit.column);
+        panel.append(el('span', `source-status ${traced.status}`, `来源${lineageLabels[traced.status]}`), el('p', 'small', '确定：SQL 内映射明确；近似：包含推定；未知：仍有未解析来源。均未核验真实表结构。'));
+        traced.traces.forEach(trace => {
+          const reason = el('p', 'trace-reason');
+          reason.append(el('span', `source-status ${trace.status}`, lineageLabels[trace.status]), document.createTextNode(` ${trace.steps.at(-1).label}：${trace.reason} `), sourceButton(data, hit.column.sourceSpan || hit.stage.sourceSpan, '定位此字段'));
+          panel.append(reason);
+        });
         if (traced.expression.trim() !== hit.column.name) panel.append(el('p', 'group-label', 'SQL 表达式'), el('pre', '', traced.expression));
         panel.append(el('p', 'group-label', traced.paths.length === 1 ? '字段来源' : '字段来源 · 共用步骤已合并'));
-        panel.append(renderGraph(buildFieldGraph(traced.paths), node => {
-          const match = node.label.match(/^CTE ([^.（]+)(?:（(.+) 内）)?\.(.+)$/);
-          const stage = match && data.ctes.find(stage => stage.name === match[1] && (stage.scope || '') === (match[2] || ''));
-          if (stage) {
-            const column = stage.outputColumns.find(column => column.name === match[3]);
-            if (column) renderSelection(data, { type: 'field', stage, column }, [...trail, { type: 'field', stage, column }]);
-          }
+        panel.append(renderGraph(buildFieldGraph(traced.paths, traced.traces), node => {
+          if (node.stage && node.column) renderSelection(data, { type: 'field', stage: node.stage, column: node.column }, [...trail, { type: 'field', stage: node.stage, column: node.column }]);
+          selectSqlSpan(data, node.sourceSpan);
         }, '字段来源图'));
         const paths = el('details');
         paths.append(el('summary', '', '查看完整来源路径'));
-        const root = new Map();
-        traced.paths.forEach(path => {
-          let level = root;
-          path.forEach(label => {
-            if (!level.has(label)) level.set(label, new Map());
-            level = level.get(label);
-          });
-        });
         const tree = el('div', 'lineage-tree');
-        const draw = (nodes, parent) => nodes.forEach((children, label) => {
+        traced.traces.forEach(trace => {
           const route = el('div', 'lineage-route');
-          let current = label;
-          while (true) {
-            const match = current.match(/^CTE ([^.（]+)(?:（(.+) 内）)?\.(.+)$/);
-            const upstream = match && data.ctes.find(stage => stage.name === match[1] && (stage.scope || '') === (match[2] || ''));
-            const name = match ? `${match[1]}${match[2] ? `（${match[2]} 内）` : ''}` : '';
-            const display = match ? `${name}${match[3] === hit.column.name ? '' : `.${match[3]}`}`
-              : current.startsWith('最终输出.') ? '最终输出'
-              : current.replace(/^(分支 \d+(?:（[^）]+）)?)\..+$/, '$1');
-            const kind = /^分支 \d/.test(current) ? 'branch' : children.size ? '' : 'leaf';
-            const node = el(upstream ? 'button' : 'span', `lineage-tree-label ${kind}`, display);
-            node.title = current;
-            if (upstream) node.addEventListener('click', () => renderSelection(data, { type: 'cte', stage: upstream }, [...trail, { type: 'cte', stage: upstream }]));
-            if (route.childElementCount) route.append(el('b', '', '→'));
-            route.append(node);
-            if (children.size !== 1) break;
-            [current, children] = children.entries().next().value;
-          }
-          parent.append(route);
-          if (children.size) {
-            const forks = el('div', 'lineage-forks');
-            draw(children, forks);
-            parent.append(forks);
-          }
+          trace.steps.forEach((step, i) => {
+            if (i) route.append(el('b', '', '→'));
+            const button = sourceButton(data, step.sourceSpan, step.label);
+            button.className = 'lineage-tree-label';
+            route.append(button);
+          });
+          tree.append(route);
         });
-        draw(root, tree);
         paths.append(tree);
         panel.append(paths);
       }
@@ -682,7 +705,7 @@ LIMIT 10;`;
     }
     function showHighlights() {
       const sql = input.value;
-      const ranges = !findBar.hidden && findInput.value ? findMatches : selectedWord
+      const ranges = !findBar.hidden && findInput.value ? findMatches : selectedRange ? [selectedRange] : selectedWord
         ? wordRanges(sql).filter(word => word.value.toLowerCase() === selectedWord.toLowerCase()) : [];
       const content = document.createDocumentFragment();
       let offset = 0;
@@ -753,6 +776,8 @@ LIMIT 10;`;
     }
     input.addEventListener('scroll', syncHighlights);
     input.addEventListener('input', () => {
+      selectedRange = null;
+      document.getElementById('source-location').textContent = activeSql && activeSql !== input.value ? 'SQL 已修改，请重新生成数据地图。' : '';
       if (!findBar.hidden) updateFind();
       else showHighlights();
     });
@@ -777,6 +802,7 @@ LIMIT 10;`;
     document.getElementById('find-next').addEventListener('click', () => moveFind(1));
     document.getElementById('find-close').addEventListener('click', () => closeFind());
     input.addEventListener('click', () => {
+      selectedRange = null;
       if (!findBar.hidden) closeFind(false);
       const words = wordRanges(input.value);
       const word = words.find(word => word.start <= input.selectionStart && input.selectionStart < word.end)
@@ -788,11 +814,13 @@ LIMIT 10;`;
         if (activeSql !== input.value) render(analyze(input.value));
         const hit = locateSql(input.value, activeData, input.selectionStart);
         if (hit) renderSelection(activeData, hit);
-      } catch (error) { output.className = ''; output.replaceChildren(el('p', 'error', error.message)); }
+      } catch (error) { showError(error); }
     });
     document.getElementById('analyze').addEventListener('click', () => {
+      selectedRange = null;
+      document.getElementById('source-location').textContent = '';
       try { render(analyze(input.value)); }
-      catch (error) { activeSql = ''; output.className = ''; output.replaceChildren(el('p', 'error', error.message)); }
+      catch (error) { showError(error); }
     });
     document.getElementById('example').addEventListener('click', () => {
       input.value = sample;
@@ -808,6 +836,8 @@ LIMIT 10;`;
     });
     document.getElementById('clear').addEventListener('click', () => {
       input.value = '';
+      selectedRange = null;
+      document.getElementById('source-location').textContent = '';
       selectedWord = '';
       closeFind(false);
       activeSql = '';

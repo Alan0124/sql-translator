@@ -45,8 +45,9 @@ function buildFlowGraph(data) {
         node = stages.get(cte);
         if (!node) {
           const key = source.name.toLowerCase();
-          if (!tables.has(key)) tables.set(key, add('table', source.name, '源表'));
+          if (!tables.has(key)) { const table = add('table', source.name, '源表'); table.sourceSpans = []; tables.set(key, table); }
           node = tables.get(key);
+          if (source.sourceSpan) node.sourceSpans.push(source.sourceSpan);
         }
       }
       const join = i > 0 ? stage.joins[i - 1] : null;
@@ -57,28 +58,76 @@ function buildFlowGraph(data) {
   [...data.ctes, ...(data.main ? [data.main] : [])].forEach(stage => wire(stage, stages.get(stage)));
   if (data.write && data.main) {
     const target = add('target', data.write.target, `INSERT ${data.write.mode}`);
+    target.sourceSpans = [data.write.sourceSpan];
     connect(stages.get(data.main), target, '写入');
   }
   return { nodes, edges };
 }
 
-function buildFieldGraph(paths) {
+function buildFieldGraph(paths, traces = []) {
   const nodes = [], edges = [], prefixes = new Map();
-  paths.forEach(path => {
+  paths.forEach((path, pathIndex) => {
     let previous;
     path.forEach((label, i) => {
-      const key = JSON.stringify(path.slice(0, i + 1));
+      const steps = traces[pathIndex]?.steps;
+      const key = JSON.stringify(path.slice(0, i + 1).map((label, j) => [label, steps?.[j]?.sourceSpan]));
       if (!prefixes.has(key)) {
-        const kind = i === 0 ? 'output' : /^CTE |^子查询/.test(label) ? 'cte' : /^分支 /.test(label) ? 'branch' : i === path.length - 1 ? 'table' : 'cte';
-        const node = { id: `f${nodes.length}`, label, kind, selectable: /^CTE /.test(label), detail: i === 0 ? '所选字段' : label.includes('.') ? label.slice(0, label.lastIndexOf('.')) : label };
+        const kind = i === 0 ? 'output' : /^CTE |^子查询/.test(label) ? 'cte' : /^分支 /.test(label) ? 'branch'
+          : i !== path.length - 1 ? 'cte' : traces[pathIndex]?.status === 'unknown' ? 'unknown' : /^(常量|基于来源记录|LATERAL VIEW)/.test(label) ? 'expression' : 'table';
+        const node = { id: `f${nodes.length}`, label, kind, selectable: !!steps?.[i]?.sourceSpan,
+          stage: steps?.[i]?.stage, column: steps?.[i]?.column, sourceSpan: steps?.[i]?.sourceSpan,
+          status: traces[pathIndex]?.status, detail: i === 0 ? '所选字段' : label.includes('.') ? label.slice(0, label.lastIndexOf('.')) : label };
         nodes.push(node);
         prefixes.set(key, node);
         if (previous) edges.push({ from: node.id, to: previous.id, label: '' });
       }
+      const node = prefixes.get(key);
+      const weights = { resolved: 0, approximate: 1, unknown: 2 };
+      if (weights[traces[pathIndex]?.status] > weights[node.status]) node.status = traces[pathIndex].status;
       previous = prefixes.get(key);
     });
   });
   return { nodes, edges };
+}
+
+const lineageLabels = { resolved: '确定', approximate: '近似', unknown: '未知' };
+
+function graphToMermaid(graph) {
+  const escape = value => String(value).replace(/[&"<>()[\]{}|;`#\r\n]/g, char => /[\r\n]/.test(char) ? '<br/>' : `#${char.codePointAt(0)};`);
+  const ids = new Map(graph.nodes.map((node, i) => [node.id, `n${i}`]));
+  const lines = ['flowchart LR'];
+  graph.nodes.forEach(node => lines.push(`  ${ids.get(node.id)}["${escape(node.label)}${node.status ? ` · ${lineageLabels[node.status]}` : ''}"]`));
+  graph.edges.forEach(edge => lines.push(`  ${ids.get(edge.from)} -->${edge.label ? `|"${escape(edge.label)}"|` : ''} ${ids.get(edge.to)}`));
+  return lines.join('\n') + '\n';
+}
+
+function graphToSvg(svg) {
+  const copy = svg.cloneNode(true);
+  const viewBox = svg.viewBox.baseVal;
+  copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  copy.setAttribute('width', viewBox.width);
+  copy.setAttribute('height', viewBox.height);
+  copy.removeAttribute('style');
+  copy.style.background = '#f8fbfa';
+  const originals = [svg, ...svg.querySelectorAll('*')];
+  [copy, ...copy.querySelectorAll('*')].forEach((element, i) => {
+    const style = getComputedStyle(originals[i]);
+    for (const property of ['fill', 'stroke', 'stroke-width', 'stroke-linejoin', 'paint-order', 'font-family', 'font-size', 'font-weight', 'text-anchor']) element.style.setProperty(property, style.getPropertyValue(property));
+    element.classList.remove('dimmed', 'selected');
+    element.removeAttribute('tabindex');
+    element.removeAttribute('aria-pressed');
+    if (element.matches('.graph-node rect')) element.style.strokeWidth = '1.2px';
+  });
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(copy);
+}
+
+function downloadGraph(content, type, filename) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function layoutGraph(graph) {
@@ -109,6 +158,15 @@ function layoutGraph(graph) {
 }
 
 function renderGraph(graph, onSelect, label = 'SQL 数据流图') {
+  const shortLabel = (text, limit) => {
+    let size = 0, result = '';
+    for (const character of text) {
+      size += character.codePointAt(0) > 255 ? 2 : 1;
+      if (size > limit) return result + '…';
+      result += character;
+    }
+    return result;
+  };
   const svgEl = (name, attrs = {}, text) => {
     const node = document.createElementNS('http://www.w3.org/2000/svg', name);
     Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
@@ -168,18 +226,19 @@ function renderGraph(graph, onSelect, label = 'SQL 数据流图') {
     if (dialog.open) { closingFromSelection = true; dialog.close(); }
     onSelect?.(node);
   };
-  const kinds = { table: '源表', cte: 'CTE / 子查询', branch: '集合分支', output: '最终输出', target: '写入目标' };
+  const kinds = { table: '源表', cte: 'CTE / 子查询', branch: '集合分支', output: '最终输出', target: '写入目标', unknown: '待核对', expression: '表达式' };
   graph.nodes.forEach(node => {
     const { x, y } = positions.get(node.id);
     const interactive = onSelect && node.selectable !== false;
-    const group = svgEl('g', { transform: `translate(${x},${y})`, class: `graph-node ${node.kind}`, tabindex: interactive ? 0 : -1, role: interactive ? 'button' : 'group', 'aria-label': `${kinds[node.kind]} ${node.label}，${node.detail}`, 'data-node': node.id });
+    const status = node.status ? ` · ${lineageLabels[node.status]}` : '';
+    const group = svgEl('g', { transform: `translate(${x},${y})`, class: `graph-node ${node.kind}`, tabindex: interactive ? 0 : -1, role: interactive ? 'button' : 'group', 'aria-label': `${kinds[node.kind]} ${node.label}，${node.detail}${status}`, 'data-node': node.id });
     group.append(svgEl('title', {}, `${node.label}\n${node.detail}`), svgEl('rect', { width: 216, height: 78, rx: 12 }),
-      svgEl('text', { x: 14, y: 20, class: 'node-kind' }, kinds[node.kind]));
+      svgEl('text', { x: 14, y: 20, class: 'node-kind' }, kinds[node.kind] + status));
     const name = node.label.split('.').at(-1);
-    const display = name.length > 24 ? `${name.slice(0, 22)}…` : name;
+    const display = shortLabel(name, 24);
     group.append(svgEl('text', { x: 14, y: 42, class: 'node-name' }, display));
     const detail = node.kind === 'table' || node.kind === 'target' ? node.label.split('.').slice(0, -1).join('.') || node.detail : node.detail;
-    group.append(svgEl('text', { x: 14, y: 62, class: 'node-detail' }, detail.length > 31 ? `${detail.slice(0, 29)}…` : detail));
+    group.append(svgEl('text', { x: 14, y: 62, class: 'node-detail' }, shortLabel(detail, 31)));
     if (interactive) {
       group.addEventListener('click', () => select(node));
       group.addEventListener('keydown', event => {
@@ -226,6 +285,14 @@ function renderGraph(graph, onSelect, label = 'SQL 数据流图') {
     closingFromSelection = false;
   });
   controls.append(expand);
+  [['导出 SVG', () => downloadGraph(graphToSvg(svg), 'image/svg+xml;charset=utf-8', `${label}.svg`)],
+    ['导出 Mermaid', () => downloadGraph(graphToMermaid(graph), 'text/plain;charset=utf-8', `${label}.mmd`)]].forEach(([text, action]) => {
+    const button = document.createElement('button');
+    button.textContent = text;
+    button.setAttribute('aria-label', `${label} · ${text}`);
+    button.addEventListener('click', action);
+    controls.append(button);
+  });
   viewport.append(svg);
   box.append(controls, viewport, dialog);
   requestAnimationFrame(() => resize(Math.max(.7, Math.min(1, (viewport.clientWidth - 8) / width))));
@@ -236,3 +303,4 @@ globalThis.buildFlowGraph = buildFlowGraph;
 globalThis.buildFieldGraph = buildFieldGraph;
 globalThis.layoutGraph = layoutGraph;
 globalThis.renderGraph = renderGraph;
+globalThis.graphToMermaid = graphToMermaid;

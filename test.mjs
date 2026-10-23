@@ -175,7 +175,7 @@ const insert = analyze(`WITH user_actions AS (SELECT user_code FROM dws.actions)
 INSERT OVERWRITE TABLE dwm.profile PARTITION (datetime)
 SELECT l.user_code, a.user_code AS action_user, '20260929' AS datetime
 FROM dim.leads l LEFT JOIN user_actions a ON l.user_code = a.user_code`);
-assert.deepEqual(insert.write, { mode: 'OVERWRITE', target: 'dwm.profile', partition: 'datetime' });
+assert.deepEqual(insert.write, { mode: 'OVERWRITE', target: 'dwm.profile', partition: 'datetime', sourceSpan: { start: 80, end: 91 } });
 assert.equal(insert.main.outputColumns.length, 3);
 assert.equal(insert.main.joins[0].source, 'user_actions');
 const complex = analyze(`WITH combined AS (
@@ -419,4 +419,83 @@ for (const invalid of ['SELECT id FROM t WHERE x = (', 'SELECT id FROM t)', 'SEL
   assert.throws(() => analyze(invalid), /括号/);
 }
 assert.equal(analyze("SELECT '(' AS label FROM t -- )\nWHERE id IN (1, 2)").main.outputColumns[0].name, 'label');
+// Source locations refer to the original UTF-16 input, including magic, CRLF,
+// comments containing identical SQL, nested scopes and set branches.
+const positionedSql = `-- 😀 SELECT a.id AS uid FROM alpha a\r\n%trino\r\nALTER TABLE out SET TBLPROPERTIES('x'='y');\r\nWITH first AS (WITH tmp AS (SELECT a.id AS uid FROM alpha a) SELECT uid FROM tmp),\r\nsecond AS (WITH tmp AS (SELECT a.id AS uid FROM alpha a) SELECT uid FROM tmp)\r\nSELECT uid FROM first UNION ALL SELECT uid FROM second;`;
+const positioned = analyze(positionedSql);
+const innerTmps = positioned.ctes.filter(stage => stage.name === 'tmp');
+assert.equal(innerTmps.length, 2);
+assert.notDeepEqual(innerTmps[0].definitionSpan, innerTmps[1].definitionSpan);
+for (const stage of innerTmps) {
+  assert.equal(positionedSql.slice(stage.outputColumns[0].sourceSpan.start, stage.outputColumns[0].sourceSpan.end), 'a.id AS uid');
+  assert.equal(locateSql(positionedSql, positioned, stage.outputColumns[0].sourceSpan.start + 3).stage, stage);
+  assert.equal(locateSql(positionedSql, positioned, stage.definitionSpan.start + 1).stage, stage);
+  assert.equal(positionedSql.slice(stage.definitionSpan.start, stage.definitionSpan.end), stage.sourceSql);
+}
+assert.equal(locateSql(positionedSql, positioned, positionedSql.indexOf('a.id') + 3), null, 'comment copies must not become source locations');
+assert.equal(locateSql(positionedSql + ' ', positioned, innerTmps[0].definitionSpan.start), null, 'stale input must not use old positions');
+const positionedTrace = traceColumn(positioned, positioned.main, positioned.main.outputColumns[0]);
+assert.equal(positionedTrace.status, 'resolved');
+for (const trace of positionedTrace.traces) {
+  const span = trace.steps.at(-1).sourceSpan;
+  assert.equal(positionedSql.slice(span.start, span.end), 'a.id AS uid');
+}
+assert.deepEqual(positionedTrace.traces.map(trace => trace.steps.find(step => step.stage?.name === 'tmp').stage), innerTmps);
+for (const branch of positioned.main.branches) {
+  assert.equal(locateSql(positionedSql, positioned, branch.outputColumns[0].sourceSpan.start + 1).stage, branch);
+}
+const derivedPositionSql = 'SELECT s.uid FROM (SELECT a.id AS uid FROM alpha a) s WHERE EXISTS (SELECT b.id FROM beta b)';
+const derivedPosition = analyze(derivedPositionSql);
+assert.equal(locateSql(derivedPositionSql, derivedPosition, derivedPositionSql.indexOf('a.id') + 3).stage, derivedPosition.main.sourceDetails[0].query.main);
+assert.equal(locateSql(derivedPositionSql, derivedPosition, derivedPositionSql.indexOf('b.id') + 3).stage, derivedPosition.main.subqueries[0].query.main);
+for (const [query, expected] of [
+  ['SELECT a.id FROM alpha a', 'resolved'],
+  ['SELECT id FROM alpha', 'approximate'],
+  ['SELECT 1 AS n', 'resolved'],
+  ['SELECT COUNT(*) AS n FROM alpha', 'approximate'],
+  ['SELECT * FROM alpha', 'unknown'],
+  ['SELECT id FROM alpha a JOIN beta b ON a.id=b.id', 'unknown'],
+  ['SELECT a.id FROM alpha a, beta b', 'unknown'],
+  ['SELECT (SELECT MAX(id) FROM beta) AS n FROM alpha', 'unknown'],
+  ['WITH c AS (SELECT a.id, a.id FROM alpha a) SELECT c.id FROM c', 'unknown'],
+  ['WITH c AS (SELECT a.id FROM alpha a) SELECT c.missing FROM c', 'unknown'],
+  ['SELECT a.id FROM alpha a UNION ALL SELECT * FROM beta', 'unknown'],
+  ['SELECT a.id FROM alpha a UNION ALL SELECT b.id, b.name FROM beta b', 'unknown']
+]) {
+  const value = analyze(query);
+  const traced = traceColumn(value, value.main, value.main.outputColumns[0]);
+  assert.equal(traced.status, expected, query);
+  assert.ok(traced.traces.every(trace => trace.reason && trace.steps.length));
+  if (expected === 'unknown') assert.ok(traced.traces.some(trace => trace.status === 'unknown'));
+}
+const preciseStar = analyze('WITH c AS (SELECT a.id FROM alpha a) SELECT c.* FROM c');
+assert.equal(preciseStar.sql.slice(preciseStar.main.outputColumns[0].sourceSpan.start, preciseStar.main.outputColumns[0].sourceSpan.end), 'c.*');
+assert.equal(traceColumn(preciseStar, preciseStar.main, preciseStar.main.outputColumns[0]).status, 'resolved');
+const namedCteSql = 'WITH c(uid) AS (SELECT a.id FROM alpha a) SELECT uid FROM c';
+const namedCte = analyze(namedCteSql);
+assert.equal(locateSql(namedCteSql, namedCte, namedCteSql.indexOf('c(uid)')).stage, namedCte.ctes[0]);
+const brokenSql = '-- 😀\n%trino\nSELECT (a.id FROM alpha a';
+assert.throws(() => analyze(brokenSql), error => error.sourceSpan.start === brokenSql.indexOf('(') && brokenSql.slice(error.sourceSpan.start, error.sourceSpan.end) === '(');
+const fieldExportGraph = buildFieldGraph(positionedTrace.paths, positionedTrace.traces);
+assert.equal(fieldExportGraph.nodes.filter(node => node.stage?.name === 'tmp').length, 2, 'export must retain distinct same-name CTEs');
+assert.ok(fieldExportGraph.nodes.filter(node => node.stage?.name === 'tmp').every(node => node.sourceSpan && node.status === 'resolved'));
+const unknownData = analyze('SELECT id FROM alpha a JOIN beta b ON a.id=b.id');
+const unknownTrace = traceColumn(unknownData, unknownData.main, unknownData.main.outputColumns[0]);
+assert.equal(buildFieldGraph(unknownTrace.paths, unknownTrace.traces).nodes.at(-1).kind, 'unknown');
+const exportGraph = { nodes: [{ id: 'unsafe-id', label: '中文 "a" [x] <tag> & | #34;\n😀', status: 'unknown' }, { id: 'other', label: '目标' }], edges: [{ from: 'unsafe-id', to: 'other', label: '读取 "x" | <y>' }] };
+const mermaid = graphToMermaid(exportGraph);
+assert.match(mermaid, /flowchart LR/);
+assert.match(mermaid, /n0 -->\|"/);
+assert.match(mermaid, /#34;a#34;/);
+assert.match(mermaid, /#91;x#93;/);
+assert.match(mermaid, /#60;tag#62;/);
+assert.match(mermaid, /#35;34#59;/);
+assert.match(mermaid, /未知/);
+assert.doesNotMatch(mermaid, /unsafe-id|<tag>/);
+assert.equal(graphToMermaid(buildFlowGraph(positioned)).split('\n').filter(line => line.includes(' -->')).length, buildFlowGraph(positioned).edges.length);
+// The page remains static and both scripts run directly without imports or a server.
+const page = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+for (const [, code] of page.matchAll(/<script>([\s\S]*?)<\/script>/g)) new Function(code);
+assert.doesNotMatch(page, /<script[^>]+src=["']https?:/);
+
 console.log('SQL 解读器与可视化检查通过');
