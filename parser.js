@@ -220,14 +220,6 @@ function parseSelect(sql, context, offset = 0) {
     i = end;
   }
   if (/\bSELECT\s+\*/i.test(sql)) result.warnings.push('SELECT * 会随上游字段变化，输出字段无法仅凭这段 SQL 固定。');
-  if (result.joins.length) {
-    result.warnings.push(result.metric.kind === 'distinct' && !result.group
-      ? '关联表若有多条匹配记录，会放大中间行数；本查询的整体 COUNT(DISTINCT) 不会因同一用户的重复匹配而增加。'
-      : '关联表若有多条匹配记录，会放大中间行数；需核对关联键或有效期是否唯一。');
-    if (result.metric.kind === 'distinct' && !result.metric.field.includes('.')) {
-      result.warnings.push(`输出列 ${result.metric.field} 未加表别名；如果两张表都有此列，查询可能报字段歧义。`);
-    }
-  }
   return result;
 }
 
@@ -502,7 +494,7 @@ function traceColumn(data, stage, column) {
   const traces = [];
   const cache = new WeakMap();
   const step = (label, stage, column, sourceSpan = column?.sourceSpan || stage?.definitionSpan || stage?.sourceSpan) => ({ label, stage, column, sourceSpan });
-  const emit = (steps, status, reason) => traces.push({ steps, status, reason });
+  const emit = steps => traces.push({ steps });
   const visit = (current, selected, steps, seen) => {
     if (!cache.has(current)) cache.set(current, new Map());
     const columns = cache.get(current);
@@ -513,17 +505,17 @@ function traceColumn(data, stage, column) {
       // Cache relative steps, retaining exact objects and source positions.
       const unique = new Map(traces.splice(start).map(result => {
         const suffix = result.steps.slice(steps.length);
-        return [JSON.stringify([suffix.map(item => [item.label, item.sourceSpan]), result.status, result.reason]), { ...result, steps: suffix }];
+        return [JSON.stringify(suffix.map(item => [item.label, item.sourceSpan])), { ...result, steps: suffix }];
       }));
       columns.set(key, [...unique.values()]);
     }
     for (const result of columns.get(key)) traces.push({ ...result, steps: [...steps, ...result.steps] });
   };
   const walk = (current, selected, steps, seen) => {
-    const end = (label, status, reason) => emit([...steps, step(label, current, selected)], status, reason);
+    const end = label => emit([...steps, step(label, current, selected)]);
     if (current.branches) {
       if (current.branches.some(branch => branch.outputColumns.length !== current.outputColumns.length)) {
-        end('集合分支输出字段数不一致', 'unknown', '集合结构不完整，需先核对各分支的字段数量和位置。');
+        end('集合分支输出字段数不一致');
         return;
       }
       const index = current.outputColumns.indexOf(selected) >= 0 ? current.outputColumns.indexOf(selected)
@@ -534,20 +526,20 @@ function traceColumn(data, stage, column) {
         const branch = current.branches[i], next = branch.outputColumns[index];
         const label = `分支 ${i + 1}${i ? `（${current.setOps[i - 1]}）` : ''}`;
         if (next) visit(branch, next, [...steps, step(`${label}.${next.name}`, branch, next)], seen);
-        else end(`${label}：缺少对应位置的输出字段`, 'unknown', '集合分支缺少对应字段。');
+        else end(`${label}：缺少对应位置的输出字段`);
       });
       return;
     }
     const refs = fieldReferences(selected.expression);
     const expressionTokens = tokens(selected.expression);
     const hasSubquery = expressionTokens.some((token, i) => token.value === '(' && ['SELECT', 'WITH'].includes(expressionTokens[i + 1]?.upper));
-    if (hasSubquery) end('子查询表达式：字段来源需在子查询节点核对', 'unknown', '表达式子查询的字段映射尚未完整解析，请查看子查询节点。');
+    if (hasSubquery) end('子查询表达式：字段来源需在子查询节点核对');
     if (!refs.length) {
       if (hasSubquery) return;
       const expression = selected.expression;
-      if (expression === '*' || /\.\*$/.test(expression)) end('SELECT *：上游字段未在这段 SQL 中列明', 'unknown', '缺少表结构，无法展开星号或确定原始字段。');
-      else if (/^('(?:''|[^'])*'|\d+(?:\.\d+)?|NULL|TRUE|FALSE)$/i.test(expression)) end(`常量：${expression}`, 'resolved', 'SQL 明确给出常量，不依赖来源字段。');
-      else end(`基于来源记录的计算：${expression}`, 'approximate', '已识别表达式，但不能仅凭 SQL 确认其完整字段依赖。');
+      if (expression === '*' || /\.\*$/.test(expression)) end('SELECT *：上游字段未在这段 SQL 中列明');
+      else if (/^('(?:''|[^'])*'|\d+(?:\.\d+)?|NULL|TRUE|FALSE)$/i.test(expression)) end(`常量：${expression}`);
+      else end(`基于来源记录的计算：${expression}`);
       return;
     }
     for (const ref of refs) {
@@ -563,43 +555,36 @@ function traceColumn(data, stage, column) {
         const upstream = source?.query?.main || source && resolveCte(data, current, source.name);
         const next = upstream?.outputColumns.find(item => item.name.toLowerCase() === current.lateral.mapField?.toLowerCase());
         if (lateralIndex === 1 && next && !seen.has(next)) {
-          const start = traces.length;
           visit(upstream, next, [...steps, step(label, current, selected), step(`${source.query ? '子查询' : `CTE ${upstream.name}`}.${next.name}`, upstream, next)], new Set([...seen, next]));
-          traces.slice(start).forEach(trace => {
-            if (trace.status !== 'unknown') trace.status = 'approximate';
-            trace.reason += ' LATERAL VIEW 按已识别的 Map 表达式推定，仍需核对展开规则。';
-          });
-        } else end(label, 'unknown', '展开字段的完整映射需要核对上游表达式和表结构。');
+        } else end(label);
         continue;
       }
       let sources = current.sourceDetails;
       if (qualifier) sources = sources.filter(source => [source.alias, source.name, source.name.split('.').at(-1)].some(name => name && qualifiedIdentifier(name) === qualifier.toLowerCase()));
       else if (sources.length > 1) sources = [];
       if (sources.length !== 1 || current.warnings.some(message => message.startsWith('FROM 中的逗号连接'))) {
-        end(`${ref}：${sources.length > 1 ? '多个来源匹配' : '来源无法确定'}（需核对表结构或补充别名）`, 'unknown', '来源有歧义、别名不匹配或 FROM 尚未完整拆解，不能绑定到任意源表。');
+        end(`${ref}：${sources.length > 1 ? '多个来源匹配' : '来源无法确定'}（需核对表结构或补充别名）`);
         continue;
       }
       const source = sources[0];
       const upstream = source.query?.main || resolveCte(data, current, source.name);
       if (!upstream) {
-        if (source.name === '未知来源' || source.name === '子查询') end(`${ref}：来源无法确定`, 'unknown', '未解析出有效来源。');
-        else emit([...steps, step(`${source.name}.${field}${suffix}`, null, null, selected.sourceSpan || source.sourceSpan)], qualifier ? 'resolved' : 'approximate',
-          qualifier ? 'SQL 明确限定来源；未连接数据库核验字段存在性。' : '按唯一 FROM 来源推定；缺少表结构，字段归属仍需核对。');
+        if (source.name === '未知来源' || source.name === '子查询') end(`${ref}：来源无法确定`);
+        else emit([...steps, step(`${source.name}.${field}${suffix}`, null, null, selected.sourceSpan || source.sourceSpan)]);
         continue;
       }
       const matches = upstream.outputColumns.filter(item => item.name.toLowerCase() === field.toLowerCase());
       const next = matches.length === 1 ? matches[0] : null;
       const label = `${source.query ? `子查询${source.alias ? ` ${source.alias}` : ''}` : `CTE ${upstream.name}${upstream.scope ? `（${upstream.scope} 内）` : ''}`}.${field}`;
-      if (!next || seen.has(next)) end(`${label}（${next ? '循环引用' : '未找到字段定义'}）`, 'unknown', matches.length > 1 ? '上游存在同名输出字段，不能任取一个。' : '上游字段缺失或存在循环，无法确认来源。');
+      if (!next || seen.has(next)) end(`${label}（${next ? '循环引用' : '未找到字段定义'}）`);
       else visit(upstream, next, [...steps, step(label, upstream, next)], new Set([...seen, next]));
     }
   };
   visit(stage, column, [step(`${stage.name ? `CTE ${stage.name}` : '最终输出'}.${column.name}`, stage, column)], new Set());
-  const status = traces.some(item => item.status === 'unknown') ? 'unknown' : traces.some(item => item.status === 'approximate') ? 'approximate' : 'resolved';
   const expression = stage.branches
     ? stage.branches.map((branch, i) => `分支 ${i + 1}：${branch.outputColumns[stage.outputColumns.indexOf(column)]?.expression || '未找到字段'}`).join('\n')
     : column.expression;
-  return { expression, paths: traces.map(item => item.steps.map(step => step.label)), traces, status, reasons: [...new Set(traces.map(item => item.reason))] };
+  return { expression, paths: traces.map(item => item.steps.map(step => step.label)), traces };
 }
 
 function queryStages(data) {

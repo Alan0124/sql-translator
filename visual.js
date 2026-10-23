@@ -73,30 +73,25 @@ function buildFieldGraph(paths, traces = []) {
       const key = JSON.stringify(path.slice(0, i + 1).map((label, j) => [label, steps?.[j]?.sourceSpan]));
       if (!prefixes.has(key)) {
         const kind = i === 0 ? 'output' : /^CTE |^子查询/.test(label) ? 'cte' : /^分支 /.test(label) ? 'branch'
-          : i !== path.length - 1 ? 'cte' : traces[pathIndex]?.status === 'unknown' ? 'unknown' : /^(常量|基于来源记录|LATERAL VIEW)/.test(label) ? 'expression' : 'table';
+          : i !== path.length - 1 ? 'cte' : steps?.[i]?.stage ? 'expression' : 'table';
         const node = { id: `f${nodes.length}`, label, kind, selectable: !!steps?.[i]?.sourceSpan,
           stage: steps?.[i]?.stage, column: steps?.[i]?.column, sourceSpan: steps?.[i]?.sourceSpan,
-          status: traces[pathIndex]?.status, detail: i === 0 ? '所选字段' : label.includes('.') ? label.slice(0, label.lastIndexOf('.')) : label };
+          detail: i === 0 ? '所选字段' : label.includes('.') ? label.slice(0, label.lastIndexOf('.')) : label };
         nodes.push(node);
         prefixes.set(key, node);
         if (previous) edges.push({ from: node.id, to: previous.id, label: '' });
       }
-      const node = prefixes.get(key);
-      const weights = { resolved: 0, approximate: 1, unknown: 2 };
-      if (weights[traces[pathIndex]?.status] > weights[node.status]) node.status = traces[pathIndex].status;
       previous = prefixes.get(key);
     });
   });
   return { nodes, edges };
 }
 
-const lineageLabels = { resolved: '确定', approximate: '近似', unknown: '未知' };
-
 function graphToMermaid(graph) {
   const escape = value => String(value).replace(/[&"<>()[\]{}|;`#\r\n]/g, char => /[\r\n]/.test(char) ? '<br/>' : `#${char.codePointAt(0)};`);
   const ids = new Map(graph.nodes.map((node, i) => [node.id, `n${i}`]));
   const lines = ['flowchart LR'];
-  graph.nodes.forEach(node => lines.push(`  ${ids.get(node.id)}["${escape(node.label)}${node.status ? ` · ${lineageLabels[node.status]}` : ''}"]`));
+  graph.nodes.forEach(node => lines.push(`  ${ids.get(node.id)}["${escape(node.label)}"]`));
   graph.edges.forEach(edge => lines.push(`  ${ids.get(edge.from)} -->${edge.label ? `|"${escape(edge.label)}"|` : ''} ${ids.get(edge.to)}`));
   return lines.join('\n') + '\n';
 }
@@ -226,14 +221,13 @@ function renderGraph(graph, onSelect, label = 'SQL 数据流图') {
     if (dialog.open) { closingFromSelection = true; dialog.close(); }
     onSelect?.(node);
   };
-  const kinds = { table: '源表', cte: 'CTE / 子查询', branch: '集合分支', output: '最终输出', target: '写入目标', unknown: '待核对', expression: '表达式' };
+  const kinds = { table: '源表', cte: 'CTE / 子查询', branch: '集合分支', output: '最终输出', target: '写入目标', expression: '表达式' };
   graph.nodes.forEach(node => {
     const { x, y } = positions.get(node.id);
     const interactive = onSelect && node.selectable !== false;
-    const status = node.status ? ` · ${lineageLabels[node.status]}` : '';
-    const group = svgEl('g', { transform: `translate(${x},${y})`, class: `graph-node ${node.kind}`, tabindex: interactive ? 0 : -1, role: interactive ? 'button' : 'group', 'aria-label': `${kinds[node.kind]} ${node.label}，${node.detail}${status}`, 'data-node': node.id });
+    const group = svgEl('g', { transform: `translate(${x},${y})`, class: `graph-node ${node.kind}`, tabindex: interactive ? 0 : -1, role: interactive ? 'button' : 'group', 'aria-label': `${kinds[node.kind]} ${node.label}，${node.detail}`, 'data-node': node.id });
     group.append(svgEl('title', {}, `${node.label}\n${node.detail}`), svgEl('rect', { width: 216, height: 78, rx: 12 }),
-      svgEl('text', { x: 14, y: 20, class: 'node-kind' }, kinds[node.kind] + status));
+      svgEl('text', { x: 14, y: 20, class: 'node-kind' }, kinds[node.kind]));
     const name = node.label.split('.').at(-1);
     const display = shortLabel(name, 24);
     group.append(svgEl('text', { x: 14, y: 42, class: 'node-name' }, display));

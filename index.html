@@ -182,13 +182,8 @@
     .empty p { font-size: 12px; line-height: 1.8; margin: 0; }
     @media (max-width: 1000px) { main { grid-template-columns: minmax(300px, .8fr) minmax(0, 1fr); gap: 15px; padding: 0 16px 32px; } .card { padding: 16px; } .stat { padding: 10px 8px; } }
     @media (max-width: 760px) { header { padding: 18px; } header p { max-width: 240px; } .local-badge { display: none; } main { grid-template-columns: 1fr; } .input-card { position: static; } .editor { height: 300px; } .stats { gap: 6px; } .graph-viewport { max-height: 350px; } .visual-heading span { display: none; } }
-    .source-status { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #e5f3ec; color: #245e50; }
-    .source-status.approximate { background: #fff2d6; color: #805d16; }
-    .source-status.unknown { background: #fae9e7; color: #9a443a; }
-    .field .source-status { margin-top: 5px; }
     .source-location { min-height: 18px; margin: 8px 0; font-size: 12px; color: #6c8076; }
     .lineage-head { flex-wrap: wrap; }
-    .trace-reason { margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -419,8 +414,6 @@ LIMIT 10;`;
       stage.outputColumns.forEach(column => {
         const field = el('button', `field${column.calculated ? ' calculated' : ''}`, column.name);
         field.addEventListener('click', () => renderSelection(data, { type: 'field', stage, column }));
-        const status = traceColumn(data, stage, column).status;
-        field.append(el('small', `source-status ${status}`, `来源${lineageLabels[status]}`));
         if (column.note || column.calculated) field.append(el('small', '', column.note || '计算字段'));
         fields.append(field);
       });
@@ -571,10 +564,9 @@ LIMIT 10;`;
       output.append(steps);
       const warnings = [...new Set(stages.flatMap(s => s.warnings))];
       if (warnings.length) {
-        output.append(el('h3', '', '需要核对'));
+        output.append(el('h3', '', '解析说明'));
         warnings.forEach(message => output.append(el('p', 'warning', message)));
       }
-      output.append(el('p', 'small', '静态解读；结果数量、字段类型和关联唯一性需要查表验证。'));
     }
     function showInspector(panel) {
       const inspector = output.querySelector('.inspector');
@@ -666,12 +658,6 @@ LIMIT 10;`;
         }
       } else {
         const traced = traceColumn(data, hit.stage, hit.column);
-        panel.append(el('span', `source-status ${traced.status}`, `来源${lineageLabels[traced.status]}`), el('p', 'small', '确定：SQL 内映射明确；近似：包含推定；未知：仍有未解析来源。均未核验真实表结构。'));
-        traced.traces.forEach(trace => {
-          const reason = el('p', 'trace-reason');
-          reason.append(el('span', `source-status ${trace.status}`, lineageLabels[trace.status]), document.createTextNode(` ${trace.steps.at(-1).label}：${trace.reason} `), sourceButton(data, hit.column.sourceSpan || hit.stage.sourceSpan, '定位此字段'));
-          panel.append(reason);
-        });
         if (traced.expression.trim() !== hit.column.name) panel.append(el('p', 'group-label', 'SQL 表达式'), el('pre', '', traced.expression));
         panel.append(el('p', 'group-label', traced.paths.length === 1 ? '字段来源' : '字段来源 · 共用步骤已合并'));
         panel.append(renderGraph(buildFieldGraph(traced.paths, traced.traces), node => {
